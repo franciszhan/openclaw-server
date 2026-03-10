@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenClaw private bridge setup
+After=network-pre.target
+Before=network.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=OPENCLAW_HOST_CONFIG=/etc/openclaw/host-config.json
+ExecStart=/usr/local/lib/openclaw/openclaw-network-setup.sh up
+ExecStop=/usr/local/lib/openclaw/openclaw-network-setup.sh down
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd)
+CANDIDATES=()
+
+if [[ -n "${OPENCLAW_HOST_ROOT:-}" ]]; then
+  CANDIDATES+=("${OPENCLAW_HOST_ROOT}")
+fi
+CANDIDATES+=("${PROJECT_ROOT}" "/opt/openclaw-host")
+
+for candidate in "${CANDIDATES[@]}"; do
+  if [[ -d "${candidate}/src/openclaw_hostctl" ]]; then
+    PROJECT_ROOT="${candidate}"
+    break
+  fi
+done
+
+if [[ ! -d "${PROJECT_ROOT}/src/openclaw_hostctl" ]]; then
+  echo "could not locate openclaw_hostctl sources" >&2
+  exit 1
+fi
+
+export PYTHONPATH="${PROJECT_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m openclaw_hostctl.cli "$@"

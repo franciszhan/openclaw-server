@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from .config import load_host_config
+from .hostctl import HostController
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="OpenClaw host lifecycle control")
+    parser.add_argument(
+        "--config",
+        default="/etc/openclaw/host-config.json",
+        type=Path,
+        help="path to the host configuration file",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("init-layout")
+    subparsers.add_parser("validate-config")
+
+    provision = subparsers.add_parser("provision")
+    provision.add_argument("user_id")
+    provision.add_argument("--display-name")
+    provision.add_argument("--user-config", type=Path)
+    provision.add_argument("--disk-size-gib", type=int)
+
+    start = subparsers.add_parser("start")
+    start.add_argument("user_id")
+
+    stop = subparsers.add_parser("stop")
+    stop.add_argument("user_id")
+
+    status = subparsers.add_parser("status")
+    status.add_argument("user_id", nargs="?")
+
+    snapshot = subparsers.add_parser("snapshot")
+    snapshot_subparsers = snapshot.add_subparsers(dest="snapshot_command", required=True)
+
+    snapshot_create = snapshot_subparsers.add_parser("create")
+    snapshot_create.add_argument("user_id")
+    snapshot_create.add_argument("label")
+
+    snapshot_list = snapshot_subparsers.add_parser("list")
+    snapshot_list.add_argument("user_id")
+
+    snapshot_restore = snapshot_subparsers.add_parser("restore")
+    snapshot_restore.add_argument("user_id")
+    snapshot_restore.add_argument("snapshot_name")
+    snapshot_restore.add_argument("--force", action="store_true")
+
+    runtime = subparsers.add_parser("runtime")
+    runtime_subparsers = runtime.add_subparsers(dest="runtime_command", required=True)
+    runtime_prepare = runtime_subparsers.add_parser("prepare")
+    runtime_prepare.add_argument("user_id")
+    runtime_cleanup = runtime_subparsers.add_parser("cleanup")
+    runtime_cleanup.add_argument("user_id")
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    config = load_host_config(args.config)
+    controller = HostController(config)
+
+    if args.command == "init-layout":
+        controller.init_layout()
+        print(f"initialized {config.storage_root}")
+        return 0
+
+    if args.command == "validate-config":
+        messages = controller.validate()
+        if messages:
+            for message in messages:
+                print(f"ERROR: {message}")
+            return 1
+        print("configuration looks valid")
+        return 0
+
+    if args.command == "provision":
+        record = controller.provision_user(
+            args.user_id,
+            display_name=args.display_name,
+            user_config_path=args.user_config,
+            disk_size_gib=args.disk_size_gib,
+        )
+        print(json.dumps(record.to_dict(), indent=2))
+        return 0
+
+    if args.command == "start":
+        controller.start_user(args.user_id)
+        print(f"started {args.user_id}")
+        return 0
+
+    if args.command == "stop":
+        controller.stop_user(args.user_id)
+        print(f"stopped {args.user_id}")
+        return 0
+
+    if args.command == "status":
+        print(json.dumps(controller.status(args.user_id), indent=2))
+        return 0
+
+    if args.command == "snapshot":
+        if args.snapshot_command == "create":
+            path = controller.create_snapshot(args.user_id, args.label)
+            print(path)
+            return 0
+        if args.snapshot_command == "list":
+            snapshots = [str(path.name) for path in controller.list_snapshots(args.user_id)]
+            print(json.dumps(snapshots, indent=2))
+            return 0
+        if args.snapshot_command == "restore":
+            path = controller.restore_snapshot(args.user_id, args.snapshot_name, force=args.force)
+            print(path)
+            return 0
+
+    if args.command == "runtime":
+        if args.runtime_command == "prepare":
+            controller.runtime_prepare(args.user_id)
+            print(f"prepared runtime for {args.user_id}")
+            return 0
+        if args.runtime_command == "cleanup":
+            controller.runtime_cleanup(args.user_id)
+            print(f"cleaned runtime for {args.user_id}")
+            return 0
+
+    parser.error("unknown command")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

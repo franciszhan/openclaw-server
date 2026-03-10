@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenClaw guest first boot finalization
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/openclaw-firstboot.sh
+
+[Install]
+WantedBy=multi-user.target
+

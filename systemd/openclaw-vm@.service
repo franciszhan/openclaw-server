@@ -1,0 +1,23 @@
+[Unit]
+Description=OpenClaw Firecracker microVM for %i
+After=network-online.target openclaw-network.service
+Requires=openclaw-network.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=/usr/local/bin/openclaw-hostctl runtime prepare %i
+ExecStart=/usr/local/bin/firecracker --config-file /var/lib/openclaw/vms/%i/runtime/firecracker.json
+ExecStop=/bin/kill -TERM $MAINPID
+ExecStopPost=/usr/local/bin/openclaw-hostctl runtime cleanup %i
+Restart=on-failure
+RestartSec=5
+KillMode=process
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+

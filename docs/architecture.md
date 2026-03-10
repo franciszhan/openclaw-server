@@ -1,0 +1,97 @@
+# Architecture Summary
+
+## Scope
+
+This v0 design targets one DigitalOcean Droplet and one Firecracker microVM per opted-in employee.
+
+It deliberately does not try to become a general cloud platform. The admin model is host-centric, explicit, and small enough to reason about under operational pressure.
+
+## Main Components
+
+- Host OS: Debian or Ubuntu on the DigitalOcean Droplet, hardened and running Firecracker, `systemd`, `nftables`, and the `openclaw-hostctl` CLI.
+- Shared immutable guest base: one ext4 guest image file plus one Firecracker-compatible `vmlinux` kernel stored under `/var/lib/openclaw/base`.
+- Per-user writable state: one per-user ext4 root filesystem under `/var/lib/openclaw/vms/<user>/rootfs.ext4`, created with reflinks in production or full copies in a cheap test run.
+- Snapshot storage: one directory per snapshot under `/var/lib/openclaw/vms/<user>/snapshots/<timestamp>-<label>/`.
+- Private network: one bridge (`ocbr0` by default) with static guest IPs, host-only reachability by default, and optional guest egress NAT with no public inbound exposure.
+- Process supervision: one `openclaw-vm@<user>.service` systemd unit per running microVM.
+
+## Storage Model
+
+The storage model is intentionally simple:
+
+1. Build a minimal OpenClaw appliance base image once.
+2. Keep that base image immutable.
+3. Provision each employee by cloning the base image into their own rootfs file.
+4. Seed their hostname, static network config, admin SSH keys, approved shared skills, and per-user OpenClaw config before first boot.
+5. Create disk-only snapshots by cloning the user rootfs into a timestamped snapshot directory.
+6. Restore by stopping the VM, taking a `pre-restore` safety snapshot, and replacing the active rootfs file with a clone of the chosen snapshot.
+
+Production mode (`storage_copy_mode: reflink`) means:
+
+- unchanged blocks stay shared on the host filesystem
+- rollbacks are cheap and fast
+- no guest memory snapshots are involved
+- base image updates are explicit instead of magically mutating running guests
+
+Cheap test mode (`storage_copy_mode: copy`) means:
+
+- the same lifecycle still works on a normal ext4 root disk
+- provisioning and snapshots consume full disk space
+- operations are slower, but acceptable for a two-VM smoke test
+
+## Isolation Model
+
+Primary isolation boundary:
+
+- KVM-backed Firecracker microVM boundary per employee
+
+Additional guardrails:
+
+- one private tap interface per VM
+- bridge port isolation enabled on each tap
+- no guest-to-guest forwarding on the bridge
+- no public guest listeners exposed directly
+- root SSH disabled on the host
+- key-only admin access
+- restrictive host firewall
+
+This repo intentionally uses Firecracker directly under `systemd` rather than layering in a more complex control plane or jailer-based management flow for v0. The tradeoff is less moving parts and easier recovery at the expense of a tighter but less feature-rich sandboxing story around the Firecracker process itself.
+
+## Networking
+
+Default network layout:
+
+- host bridge: `172.31.0.1/24`
+- guest pool: `172.31.0.10-172.31.0.250`
+- one static IP per guest
+- SSH to guests only over the private bridge
+- no inbound routing from the public internet to guests
+- optional egress NAT for guests if `allow_guest_egress` is true
+
+`nftables` drops guest-to-guest forwarding, so the only normal communication paths are:
+
+- host -> guest
+- guest -> host
+- guest -> internet via host NAT, if enabled
+
+## Operational Assumptions
+
+- Production: `/var/lib/openclaw` lives on XFS with reflink enabled or on btrfs.
+- Cheap test run: `/var/lib/openclaw` may live on the default Droplet ext4 root disk if `storage_copy_mode` is set to `copy`.
+- The Droplet exposes `/dev/kvm` and nested virtualization works in the chosen region and plan.
+- The Droplet is sized with headroom for nested virtualization overhead; avoid the smallest shared-CPU plans for multi-user usage.
+- If the Droplet root filesystem is not suitable for reflink-backed storage, attach a separate DigitalOcean Volume and mount it at `/var/lib/openclaw`.
+- Firecracker is installed separately at `/usr/local/bin/firecracker`.
+- A Firecracker-compatible `vmlinux` is placed at the configured path.
+- The host admin maintains `/etc/openclaw/admin_authorized_keys`.
+- OpenClaw installation inside the guest is handled at base-image build time through `OPENCLAW_INSTALL_CMD`.
+- DigitalOcean may live-migrate the Droplet for maintenance; nested Firecracker guests should be restarted after such an event.
+
+## Known v0 Limits
+
+- Snapshots are disk-only and require the VM to be stopped for a clean rollback point.
+- There is no self-service UI.
+- There is no live migration or memory-state capture.
+- Provider-initiated Droplet live migrations are outside the control plane and must be handled operationally.
+- Base-image upgrades do not automatically rebase existing users.
+- Guest customization is file-based and simple by design.

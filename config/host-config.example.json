@@ -1,0 +1,22 @@
+{
+  "storage_root": "/var/lib/openclaw",
+  "firecracker_bin": "/usr/local/bin/firecracker",
+  "kernel_image": "/var/lib/openclaw/base/vmlinux",
+  "base_rootfs": "/var/lib/openclaw/base/openclaw-base.ext4",
+  "storage_copy_mode": "reflink",
+  "bridge_name": "ocbr0",
+  "bridge_cidr": "172.31.0.1/24",
+  "first_guest_ip": "172.31.0.10",
+  "last_guest_ip": "172.31.0.250",
+  "guest_dns": [
+    "1.1.1.1",
+    "1.0.0.1"
+  ],
+  "vcpu_count": 2,
+  "mem_mib": 4096,
+  "smt": false,
+  "allow_guest_egress": true,
+  "admin_ssh_keys_path": "/etc/openclaw/admin_authorized_keys",
+  "shared_skills_dir": "/var/lib/openclaw/shared-skills",
+  "loop_mount_base": "/mnt/openclaw"
+}
