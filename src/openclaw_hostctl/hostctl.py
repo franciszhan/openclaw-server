@@ -235,7 +235,7 @@ class HostController:
 
     def _seed_guest_files(self, mount_dir: Path, user: UserRecord, user_config_path: Path | None) -> None:
         write_file(mount_dir, "/etc/hostname", user.machine_name + "\n", 0o644)
-        network_config = render_guest_network(self.config, user.ip_address)
+        network_config = render_guest_network(self.config, user.ip_address, user.mac_address)
         write_file(mount_dir, "/etc/systemd/network/20-eth0.network", network_config, 0o644)
         write_file(
             mount_dir,
@@ -284,11 +284,11 @@ class HostController:
         run(["ip", "link", "set", tap_name, "up"])
 
 
-def render_guest_network(config: HostConfig, guest_ip: str) -> str:
+def render_guest_network(config: HostConfig, guest_ip: str, guest_mac: str) -> str:
     dns_lines = "\n".join(f"DNS={server}" for server in config.guest_dns)
     return (
         "[Match]\n"
-        "Name=eth0\n\n"
+        f"MACAddress={guest_mac}\n\n"
         "[Network]\n"
         f"Address={guest_ip}/{config.bridge_network.prefixlen}\n"
         f"Gateway={config.bridge_host_ip}\n"

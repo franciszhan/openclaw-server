@@ -42,7 +42,8 @@ class HostControllerTests(unittest.TestCase):
 
     def test_render_guest_network_uses_static_addressing(self) -> None:
         config = example_config(Path("/tmp/openclaw"))
-        network = render_guest_network(config, "172.31.0.15")
+        network = render_guest_network(config, "172.31.0.15", "06:00:ac:1f:00:0f")
+        self.assertIn("MACAddress=06:00:ac:1f:00:0f", network)
         self.assertIn("Address=172.31.0.15/24", network)
         self.assertIn("Gateway=172.31.0.1", network)
         self.assertIn("DNS=1.1.1.1", network)
