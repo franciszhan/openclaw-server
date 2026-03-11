@@ -64,9 +64,11 @@ Default network layout:
 - host bridge: `172.31.0.1/24`
 - guest pool: `172.31.0.10-172.31.0.250`
 - one static IP per guest
-- SSH to guests only over the private bridge
+- SSH to guests only over the private bridge, typically via `ProxyJump` through the Droplet from an admin workstation
 - no inbound routing from the public internet to guests
 - optional egress NAT for guests if `allow_guest_egress` is true
+
+Direct SaaS model access from inside the guest depends on that egress path. If `allow_guest_egress` is false, OpenClaw needs an internal model proxy or another host-side relay instead of calling the provider APIs directly.
 
 `nftables` drops guest-to-guest forwarding, so the only normal communication paths are:
 

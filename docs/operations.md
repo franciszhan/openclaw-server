@@ -79,6 +79,7 @@ Then edit `/etc/openclaw/host-config.json` and confirm:
 - `storage_copy_mode` is `copy` for a no-extra-volume test run on ext4, or `reflink` for the real reflink-backed setup
 - `admin_ssh_keys_path` contains the host admin keys
 - `shared_skills_dir` contains the approved shared skills you want copied into guests
+- `allow_guest_egress` is `true` if guests need to call public LLM APIs directly; leave it `false` only if you plan to provide an internal relay or proxy
 
 DigitalOcean-specific recommendation:
 
@@ -94,9 +95,12 @@ Important behavior:
 Inspect the staged files if you want:
 
 ```bash
+sudo /usr/local/lib/openclaw/render-lockdown-config.sh
 sudo ls -lah /etc/openclaw/lockdown
 sudo nft -c -f /etc/openclaw/lockdown/nftables.conf
 ```
+
+`render-lockdown-config.sh` is safe to rerun after any edit to `/etc/openclaw/host-config.json`. It refreshes the staged firewall config from the current host settings instead of leaving stale candidate files behind.
 
 ## Firecracker Artifacts
 
@@ -149,7 +153,7 @@ Only build your own kernel once the basic VM lifecycle is working and you are re
 
 ## Base Image Build
 
-The base image script installs a minimal Debian guest, creates an `admin` user, enables SSH and `systemd-networkd`, and installs the guest first-boot unit.
+The base image script installs a minimal Debian guest, creates an `admin` user, installs `udev`, enables SSH and `systemd-networkd`, and installs the guest first-boot unit.
 
 Example:
 
@@ -234,25 +238,29 @@ sudo systemctl status openclaw-vm@alice.service
 sudo journalctl -u openclaw-vm@alice.service
 ```
 
-Guest access from the host:
+Guest access for a human admin should normally come from your workstation through the Droplet as a jump host:
 
 ```bash
-ssh admin@172.31.0.10
+ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.10
 ```
+
+Direct `ssh admin@172.31.0.10` from the Droplet itself only works if you also place the matching private key on the host. This repo does not do that by default.
 
 For the first run, start one guest before starting the second:
 
 ```bash
 sudo openclaw-hostctl start alice
 sudo journalctl -u openclaw-vm@alice.service -n 120 --no-pager
-ssh admin@172.31.0.10
+ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.10
 
 sudo openclaw-hostctl start bob
 sudo journalctl -u openclaw-vm@bob.service -n 120 --no-pager
-ssh admin@172.31.0.11
+ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.11
 ```
 
 This makes it obvious whether you have a general boot problem or a second-VM runtime problem.
+
+If `allow_guest_egress` is true, `openclaw-network.service` now installs a small runtime masquerade rule before lockdown is applied. This keeps direct LLM calls working during the first-run smoke test. The permanent NAT rule still comes from the staged `nftables` policy once you apply lockdown.
 
 ## Apply Lockdown
 
@@ -261,7 +269,7 @@ Only apply host lockdown after all of these are true:
 - you can still reach the Droplet Console
 - your admin IPs in `ADMIN_CIDRS` are correct
 - `alice` and `bob` both boot successfully
-- you can SSH from the host into both guests
+- you can SSH from your workstation into both guests through the Droplet jump host
 
 Then apply the staged hardening:
 
@@ -272,6 +280,7 @@ sudo nft list ruleset
 ```
 
 Before you close the console, verify SSH from a second terminal on your workstation.
+If guest access matters immediately, also re-run one `ssh -J ... admin@172.31.0.10` test after lockdown so you confirm the jump-host path still works.
 
 ## First Two-VM Test
 
@@ -280,13 +289,37 @@ Recommended first test order:
 1. `openclaw-hostctl validate-config`
 2. provision `alice`
 3. start `alice`
-4. verify `ssh admin@172.31.0.10`
+4. verify `ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.10`
 5. provision `bob`
 6. start `bob`
-7. verify `ssh admin@172.31.0.11`
+7. verify `ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.11`
 8. test guest-to-guest isolation from inside `alice`
-9. test one snapshot and restore on `alice`
-10. apply lockdown
+9. test one prompt from inside `alice` so you confirm LLM egress works
+10. test one snapshot and restore on `alice`
+11. apply lockdown
+
+For a persistence check before you trust the environment, make a user-visible change inside the guest, stop the VM, start it again, and confirm the state remains:
+
+```bash
+ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.10 'echo persistent-test > ~/persist.txt'
+sudo openclaw-hostctl stop alice
+sudo openclaw-hostctl start alice
+ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.10 'cat ~/persist.txt'
+```
+
+Disk-backed state should survive stop/start cycles. Live in-memory session state does not, because this platform does not use memory snapshots.
+
+## Optional Tailscale Host Access
+
+Tailscale on the host is a good fit for this design. It does not break Firecracker, bridge networking, or `ProxyJump` access to guests as long as you keep the Tailscale scope narrow.
+
+Recommended usage:
+
+- install Tailscale on the Droplet host only
+- use the Tailscale IP or MagicDNS name as the `ProxyJump` target instead of the public IP
+- keep the guest bridge private and do not advertise `172.31.0.0/24` as a tailnet subnet route unless you intentionally want tailnet-wide guest reachability
+
+The staged firewall already allows SSH arriving on `tailscale0`, so standard SSH over Tailscale works after lockdown without opening additional public inbound paths.
 
 ## Snapshot And Restore
 

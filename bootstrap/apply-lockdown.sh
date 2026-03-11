@@ -8,6 +8,10 @@ fi
 
 LOCKDOWN_CANDIDATE_DIR=${LOCKDOWN_CANDIDATE_DIR:-/etc/openclaw/lockdown}
 
+if [[ -x /usr/local/lib/openclaw/render-lockdown-config.sh ]]; then
+  /usr/local/lib/openclaw/render-lockdown-config.sh
+fi
+
 if [[ ! -f "${LOCKDOWN_CANDIDATE_DIR}/nftables.conf" ]]; then
   echo "missing ${LOCKDOWN_CANDIDATE_DIR}/nftables.conf" >&2
   exit 1

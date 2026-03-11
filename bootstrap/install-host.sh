@@ -45,6 +45,8 @@ exec "${INSTALL_ROOT}/scripts/openclaw-hostctl" "\$@"
 EOF
 chmod 0755 /usr/local/bin/openclaw-hostctl
 install -m 0755 "${INSTALL_ROOT}/bootstrap/openclaw-network-setup.sh" /usr/local/lib/openclaw/openclaw-network-setup.sh
+install -m 0755 "${INSTALL_ROOT}/bootstrap/render-lockdown-config.sh" /usr/local/lib/openclaw/render-lockdown-config.sh
+install -m 0644 "${INSTALL_ROOT}/bootstrap/nftables-openclaw.nft.tpl" /usr/local/lib/openclaw/nftables-openclaw.nft.tpl
 install -m 0644 "${INSTALL_ROOT}/systemd/openclaw-vm@.service" /etc/systemd/system/openclaw-vm@.service
 install -m 0644 "${INSTALL_ROOT}/bootstrap/openclaw-network.service" /etc/systemd/system/openclaw-network.service
 install -m 0755 "${INSTALL_ROOT}/bootstrap/apply-lockdown.sh" /usr/local/lib/openclaw/apply-lockdown.sh
@@ -57,34 +59,12 @@ if [[ ! -f "${CONFIG_DEST}" ]]; then
   install -m 0640 "${INSTALL_ROOT}/config/host-config.example.json" "${CONFIG_DEST}"
 fi
 
-python3 - "${CONFIG_DEST}" "${PUBLIC_IFACE}" "${ADMIN_CIDRS}" \
-  "${INSTALL_ROOT}/bootstrap/nftables-openclaw.nft.tpl" "${LOCKDOWN_CANDIDATE_DIR}/nftables.conf" <<'PY'
-import json
-import sys
-from ipaddress import ip_interface
-from pathlib import Path
+printf 'PUBLIC_IFACE=%q\nADMIN_CIDRS=%q\nCONFIG_DEST=%q\nLOCKDOWN_CANDIDATE_DIR=%q\n' \
+  "${PUBLIC_IFACE}" "${ADMIN_CIDRS}" "${CONFIG_DEST}" "${LOCKDOWN_CANDIDATE_DIR}" \
+  > /etc/openclaw/render-lockdown.env
+chmod 0600 /etc/openclaw/render-lockdown.env
 
-config_path = Path(sys.argv[1])
-public_iface = sys.argv[2]
-admin_cidrs = sys.argv[3]
-template_path = Path(sys.argv[4])
-output_path = Path(sys.argv[5])
-
-config = json.loads(config_path.read_text())
-bridge = ip_interface(config["bridge_cidr"])
-nat_rules = f'    oifname "{public_iface}" ip saddr {bridge.network} masquerade' if config["allow_guest_egress"] else ""
-
-rendered = template_path.read_text()
-rendered = rendered.replace("__PUBLIC_IFACE__", public_iface)
-rendered = rendered.replace("__BRIDGE_NAME__", config["bridge_name"])
-rendered = rendered.replace("__BRIDGE_NET__", str(bridge.network))
-rendered = rendered.replace("__ADMIN_CIDRS__", ", ".join(item.strip() for item in admin_cidrs.split(",") if item.strip()))
-rendered = rendered.replace("__NAT_RULES__", nat_rules)
-output_path.write_text(rendered)
-PY
-
-chmod 0600 "${LOCKDOWN_CANDIDATE_DIR}/nftables.conf"
-nft -c -f "${LOCKDOWN_CANDIDATE_DIR}/nftables.conf"
+/usr/local/lib/openclaw/render-lockdown-config.sh
 sysctl --system >/dev/null
 systemctl daemon-reload
 systemctl enable --now unattended-upgrades openclaw-network.service

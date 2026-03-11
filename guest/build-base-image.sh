@@ -16,6 +16,13 @@ MOUNT_DIR=$(mktemp -d)
 OPENCLAW_INSTALL_CMD=${OPENCLAW_INSTALL_CMD:-}
 SHARED_SKILLS_DIR=${SHARED_SKILLS_DIR:-}
 
+sync_resolver() {
+  if [[ -f /etc/resolv.conf ]]; then
+    rm -f "${MOUNT_DIR}/etc/resolv.conf"
+    cp /etc/resolv.conf "${MOUNT_DIR}/etc/resolv.conf"
+  fi
+}
+
 cleanup() {
   mountpoint -q "${MOUNT_DIR}/dev" && umount "${MOUNT_DIR}/dev" || true
   mountpoint -q "${MOUNT_DIR}/proc" && umount "${MOUNT_DIR}/proc" || true
@@ -35,6 +42,7 @@ mount --bind /dev "${MOUNT_DIR}/dev"
 mount -t proc proc "${MOUNT_DIR}/proc"
 mount -t sysfs sysfs "${MOUNT_DIR}/sys"
 
+sync_resolver
 chroot "${MOUNT_DIR}" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "${MOUNT_DIR}" apt-get install -y \
   ca-certificates \
@@ -44,7 +52,9 @@ DEBIAN_FRONTEND=noninteractive chroot "${MOUNT_DIR}" apt-get install -y \
   rsync \
   sudo \
   systemd \
-  systemd-sysv
+  systemd-resolved \
+  systemd-sysv \
+  udev
 
 chroot "${MOUNT_DIR}" useradd --create-home --shell /bin/bash admin
 printf 'admin ALL=(ALL) NOPASSWD:ALL\n' > "${MOUNT_DIR}/etc/sudoers.d/10-admin"
@@ -64,13 +74,13 @@ if [[ -n "${SHARED_SKILLS_DIR}" && -d "${SHARED_SKILLS_DIR}" ]]; then
 fi
 
 if [[ -n "${OPENCLAW_INSTALL_CMD}" ]]; then
+  sync_resolver
   chroot "${MOUNT_DIR}" /bin/bash -lc "${OPENCLAW_INSTALL_CMD}"
 fi
 
-chroot "${MOUNT_DIR}" systemctl enable ssh systemd-networkd openclaw-firstboot.service systemd-resolved
+systemctl --root="${MOUNT_DIR}" enable ssh systemd-networkd openclaw-firstboot.service systemd-resolved
 ln -sf /run/systemd/resolve/stub-resolv.conf "${MOUNT_DIR}/etc/resolv.conf"
 
 echo "openclaw-base" > "${MOUNT_DIR}/etc/hostname"
 
 echo "base image ready at ${IMAGE_PATH}"
-

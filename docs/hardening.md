@@ -16,6 +16,7 @@ The operational rule is important: for a first deployment, stage the hardening d
 - persistent journald storage
 - restricted `/etc/openclaw` permissions
 - no public guest-facing services by default
+- host SSH still allows local TCP forwarding so workstation `ProxyJump` access to guests continues to work after lockdown
 
 ## Firewall Behavior
 
@@ -66,6 +67,8 @@ This sequencing is intentional. It prevents the host firewall and SSH lockdown f
 
 These are reasonable next steps, but intentionally not built into v0:
 
+- put the Droplet on Tailscale and prefer admin SSH over the tailnet instead of relying only on public-IP CIDR filtering
+- do not advertise the guest bridge (`172.31.0.0/24` by default) as a Tailscale subnet route unless you explicitly want tailnet devices to reach guest VMs
 - use the Firecracker `jailer` once operational workflows are stable
 - pin outbound guest destinations if OpenClaw only needs a narrow set of egress paths
 - ship host logs to a remote sink

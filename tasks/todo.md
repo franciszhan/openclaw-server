@@ -14,8 +14,12 @@
 - Verified with `make test`.
 - Verified with `make validate`.
 - Verified Python import/parse integrity with `python3 -m compileall src`.
-- Not verified here: actual Firecracker boot, loop-mount guest seeding, nftables application, or systemd unit execution on a real host.
+- Verified on a live DigitalOcean Droplet that rebuilt guests boot under Firecracker, acquire their private bridge IPs, accept SSH via `ProxyJump`, isolate east-west traffic, and restore from a disk snapshot.
+- Root causes fixed during live validation: missing guest DNS seeding during build-time installs, missing `systemd-resolved`, missing `udev` in the appliance image, and a first-run egress gap before staged `nftables` lockdown was applied.
 
 ## Follow-Up
 
 - [x] Add a test-mode storage fallback for non-reflink filesystems so a cheap DigitalOcean smoke test can run on the default root disk.
+- [x] Verify the rebuilt guest image enables `systemd-networkd`, `systemd-resolved`, `ssh`, and `openclaw-firstboot` via `systemctl --root`.
+- [x] Reprovision and boot `alice`, then confirm host-to-guest ping and SSH over the private bridge.
+- [x] Reprovision and boot `bob`, then confirm guest isolation, persistence, and snapshot/restore on the live Droplet.
