@@ -98,6 +98,9 @@ class HostConfig:
     def runtime_dir(self, user_id: str) -> Path:
         return self.user_dir(user_id) / "runtime"
 
+    def api_socket_path(self, user_id: str) -> Path:
+        return self.runtime_dir(user_id) / "firecracker.socket"
+
 
 @dataclass(frozen=True)
 class UserRecord:

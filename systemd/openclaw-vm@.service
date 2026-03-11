@@ -9,15 +9,14 @@ Type=simple
 User=root
 Group=root
 ExecStartPre=/usr/local/bin/openclaw-hostctl runtime prepare %i
-ExecStart=/usr/local/bin/firecracker --config-file /var/lib/openclaw/vms/%i/runtime/firecracker.json
-ExecStop=/bin/kill -TERM $MAINPID
+ExecStart=/usr/local/bin/firecracker --api-sock /var/lib/openclaw/vms/%i/runtime/firecracker.socket --config-file /var/lib/openclaw/vms/%i/runtime/firecracker.json
 ExecStopPost=/usr/local/bin/openclaw-hostctl runtime cleanup %i
 Restart=on-failure
 RestartSec=5
 KillMode=process
+KillSignal=SIGTERM
 NoNewPrivileges=yes
 PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
-

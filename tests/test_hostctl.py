@@ -75,6 +75,7 @@ class FirecrackerTests(unittest.TestCase):
         rendered = render_firecracker_config(config, user)
         self.assertEqual(rendered["machine-config"]["mem_size_mib"], 4096)
         self.assertEqual(rendered["network-interfaces"][0]["guest_mac"], user.mac_address)
+        self.assertIn("root=/dev/vda", rendered["boot-source"]["boot_args"])
 
 
 if __name__ == "__main__":

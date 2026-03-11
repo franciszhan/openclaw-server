@@ -13,7 +13,7 @@ table inet filter {
     ct state established,related accept
     iif "lo" accept
     ip protocol icmp accept
-    ip saddr @admin_nets tcp dport 22 accept
+    ip saddr $admin_nets tcp dport 22 accept
     iifname $bridge_if ip saddr $bridge_net tcp dport 22 accept
     iifname $bridge_if ip saddr $bridge_net accept
   }
@@ -41,4 +41,3 @@ table ip nat {
 __NAT_RULES__
   }
 }
-

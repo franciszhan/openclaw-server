@@ -9,11 +9,13 @@
 3. Verify the Droplet exposes `/dev/kvm` before installing Firecracker.
 4. Install Firecracker and place a compatible `vmlinux` kernel under `/var/lib/openclaw/base`.
 5. Build the shared OpenClaw base image with [guest/build-base-image.sh](/Users/franciszhan/Documents/GitHub/openclaw-server/guest/build-base-image.sh).
-6. Install the host control layer and hardening artifacts with [bootstrap/install-host.sh](/Users/franciszhan/Documents/GitHub/openclaw-server/bootstrap/install-host.sh).
+6. Install the host control layer and stage the hardening artifacts with [bootstrap/install-host.sh](/Users/franciszhan/Documents/GitHub/openclaw-server/bootstrap/install-host.sh).
 7. Validate the configuration with `openclaw-hostctl validate-config`.
-8. Provision employees with `openclaw-hostctl provision`.
-9. Operate each employee VM with `start`, `stop`, `status`, `snapshot`, and `restore`.
-10. Monitor DigitalOcean maintenance events and restart nested guests after a Droplet live migration.
+8. Install Firecracker artifacts and build the guest base image.
+9. Provision employees with `openclaw-hostctl provision`.
+10. Boot and test one VM, then two VMs.
+11. Apply host lockdown only after you have confirmed console access and working SSH from your admin IPs.
+12. Monitor DigitalOcean maintenance events and restart nested guests after a Droplet live migration.
 
 ## DigitalOcean Host Choices
 
@@ -80,8 +82,70 @@ Then edit `/etc/openclaw/host-config.json` and confirm:
 
 DigitalOcean-specific recommendation:
 
-- keep the Droplet Console available while applying SSH and firewall changes
+- keep the Droplet Console available throughout the entire first run
 - if you already use DigitalOcean Cloud Firewalls, treat them as an outer network guardrail and keep `nftables` on the host as the source of truth
+
+Important behavior:
+
+- `install-host.sh` now stages the firewall and SSH hardening files under `/etc/openclaw/lockdown/`
+- it does not immediately enable `nftables`, `fail2ban`, or restart `sshd`
+- this avoids locking you out before Firecracker and guest access are working
+
+Inspect the staged files if you want:
+
+```bash
+sudo ls -lah /etc/openclaw/lockdown
+sudo nft -c -f /etc/openclaw/lockdown/nftables.conf
+```
+
+## Firecracker Artifacts
+
+Before provisioning any guests, the host needs two separate artifacts:
+
+- a Firecracker binary for the Droplet architecture
+- an uncompressed Linux kernel image named `vmlinux` that is compatible with Firecracker
+
+The commands shown later in this document assume you already have local files for both. `./firecracker` and `./vmlinux` are placeholders, not files created by this repo.
+
+Check the host architecture first:
+
+```bash
+uname -m
+```
+
+Common failure modes in this step:
+
+- `install: cannot stat './firecracker'`: you have not downloaded or built the Firecracker binary yet
+- `install: cannot stat './vmlinux'`: you do not have a guest kernel yet
+- `cannot execute binary file` or `Exec format error`: the Firecracker binary architecture does not match the Droplet architecture
+- Firecracker starts but guest boot fails immediately: the kernel is not a compatible uncompressed `vmlinux`
+
+For a first test run, prefer the official Firecracker CI guest kernel instead of building your own. It is the fastest way to avoid kernel config mistakes around virtio block, MMIO, and ext4 rootfs support.
+
+Download the latest Firecracker CI kernel for the current architecture:
+
+```bash
+ARCH="$(uname -m)"
+release_url="https://github.com/firecracker-microvm/firecracker/releases"
+latest_version=$(basename "$(curl -fsSLI -o /dev/null -w %{url_effective} ${release_url}/latest)")
+CI_VERSION="${latest_version%.*}"
+
+latest_kernel_key=$(
+  curl -fsSL "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-&list-type=2" \
+  | grep -oP "(?<=<Key>)(firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-[0-9]+\\.[0-9]+\\.[0-9]{1,3})(?=</Key>)" \
+  | sort -V \
+  | tail -1
+)
+
+mkdir -p /var/lib/openclaw/base
+curl -fL "https://s3.amazonaws.com/spec.ccfc.min/${latest_kernel_key}" \
+  -o /var/lib/openclaw/base/vmlinux
+
+file /var/lib/openclaw/base/vmlinux
+ls -lh /var/lib/openclaw/base/vmlinux
+```
+
+Only build your own kernel once the basic VM lifecycle is working and you are ready to own the guest kernel config.
 
 ## Base Image Build
 
@@ -99,6 +163,34 @@ Expected follow-up:
 
 - copy or build a Firecracker-compatible `vmlinux` to `/var/lib/openclaw/base/vmlinux`
 - keep `/var/lib/openclaw/base/openclaw-base.ext4` immutable after validation
+
+## Clean Reset
+
+The cleanest reset path is to destroy the test Droplet and create a fresh one. That is less error-prone than trying to unwind partial `systemd`, firewall, and Firecracker state on a host you have already iterated on.
+
+If you want to reuse the same Droplet instead, wipe the OpenClaw state and installed files first:
+
+```bash
+sudo systemctl stop 'openclaw-vm@*.service' || true
+sudo pkill -f '/usr/local/bin/firecracker' || true
+sudo systemctl disable --now nftables fail2ban openclaw-network.service || true
+sudo rm -f /etc/systemd/system/openclaw-vm@.service
+sudo rm -f /etc/systemd/system/openclaw-network.service
+sudo rm -f /usr/local/bin/openclaw-hostctl
+sudo rm -f /usr/local/lib/openclaw/openclaw-network-setup.sh
+sudo rm -f /usr/local/lib/openclaw/apply-lockdown.sh
+sudo rm -rf /opt/openclaw-host
+sudo rm -rf /var/lib/openclaw
+sudo rm -rf /mnt/openclaw
+sudo rm -rf /etc/openclaw
+sudo rm -f /etc/nftables.conf
+sudo rm -f /etc/ssh/sshd_config.d/10-openclaw-hardening.conf
+sudo rm -f /etc/fail2ban/jail.d/openclaw-sshd.local
+sudo systemctl daemon-reload
+sudo systemctl restart ssh
+```
+
+For a fresh Droplet, skip this section and continue with the normal install flow.
 
 ## Provision A User
 
@@ -147,6 +239,54 @@ Guest access from the host:
 ```bash
 ssh admin@172.31.0.10
 ```
+
+For the first run, start one guest before starting the second:
+
+```bash
+sudo openclaw-hostctl start alice
+sudo journalctl -u openclaw-vm@alice.service -n 120 --no-pager
+ssh admin@172.31.0.10
+
+sudo openclaw-hostctl start bob
+sudo journalctl -u openclaw-vm@bob.service -n 120 --no-pager
+ssh admin@172.31.0.11
+```
+
+This makes it obvious whether you have a general boot problem or a second-VM runtime problem.
+
+## Apply Lockdown
+
+Only apply host lockdown after all of these are true:
+
+- you can still reach the Droplet Console
+- your admin IPs in `ADMIN_CIDRS` are correct
+- `alice` and `bob` both boot successfully
+- you can SSH from the host into both guests
+
+Then apply the staged hardening:
+
+```bash
+sudo /usr/local/lib/openclaw/apply-lockdown.sh
+sudo systemctl status nftables fail2ban --no-pager
+sudo nft list ruleset
+```
+
+Before you close the console, verify SSH from a second terminal on your workstation.
+
+## First Two-VM Test
+
+Recommended first test order:
+
+1. `openclaw-hostctl validate-config`
+2. provision `alice`
+3. start `alice`
+4. verify `ssh admin@172.31.0.10`
+5. provision `bob`
+6. start `bob`
+7. verify `ssh admin@172.31.0.11`
+8. test guest-to-guest isolation from inside `alice`
+9. test one snapshot and restore on `alice`
+10. apply lockdown
 
 ## Snapshot And Restore
 

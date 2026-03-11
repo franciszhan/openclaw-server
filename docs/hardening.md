@@ -2,6 +2,8 @@
 
 The hardening in this repo is intentionally baseline-focused. It locks down the single host enough for an internal v0 deployment without introducing a heavyweight compliance framework.
 
+The operational rule is important: for a first deployment, stage the hardening during install and apply it only after the host, Firecracker, and guest SSH paths are confirmed.
+
 ## Implemented Controls
 
 - key-only SSH with [bootstrap/sshd-hardening.conf](/Users/franciszhan/Documents/GitHub/openclaw-server/bootstrap/sshd-hardening.conf)
@@ -46,6 +48,19 @@ Before using this on the real DigitalOcean Droplet, verify:
 - that Firecracker and the kernel image paths are correct
 - that `/etc/openclaw/admin_authorized_keys` is populated
 - that you retain Droplet Console access while tightening SSH and firewall rules
+
+## Application Order
+
+Safe first-run order:
+
+1. install the host packages and staged configs with `install-host.sh`
+2. validate Firecracker, the guest kernel, and the base image
+3. provision and boot one guest
+4. provision and boot a second guest
+5. verify SSH and rollback behavior
+6. apply the staged lockdown with `/usr/local/lib/openclaw/apply-lockdown.sh`
+
+This sequencing is intentional. It prevents the host firewall and SSH lockdown from becoming part of the debugging surface while you are still bringing up the first microVMs.
 
 ## Suggested Extra Controls
 

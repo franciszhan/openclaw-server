@@ -187,12 +187,14 @@ class HostController:
         user = self._load_user(user_id)
         runtime_dir = self.config.runtime_dir(user_id)
         runtime_dir.mkdir(parents=True, exist_ok=True)
+        self.config.api_socket_path(user_id).unlink(missing_ok=True)
         self._ensure_tap(user.tap_name)
         write_firecracker_config(runtime_dir / "firecracker.json", self.config, user)
 
     def runtime_cleanup(self, user_id: str) -> None:
         require_root()
         user = self._load_user(user_id)
+        self.config.api_socket_path(user_id).unlink(missing_ok=True)
         subprocess.run(["ip", "link", "del", user.tap_name], check=False, text=True)
 
     def is_running(self, user_id: str) -> bool:

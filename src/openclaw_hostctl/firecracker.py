@@ -22,7 +22,7 @@ def render_firecracker_config(config: HostConfig, user: UserRecord) -> dict[str,
     return {
         "boot-source": {
             "kernel_image_path": str(config.kernel_image),
-            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off quiet",
+            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off quiet root=/dev/vda rw rootfstype=ext4",
         },
         "drives": [
             {
@@ -52,4 +52,3 @@ def write_firecracker_config(path: Path, config: HostConfig, user: UserRecord) -
         json.dumps(render_firecracker_config(config, user), indent=2) + "\n",
         encoding="utf-8",
     )
-
