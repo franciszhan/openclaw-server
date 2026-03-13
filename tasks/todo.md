@@ -23,3 +23,11 @@
 - [x] Verify the rebuilt guest image enables `systemd-networkd`, `systemd-resolved`, `ssh`, and `openclaw-firstboot` via `systemctl --root`.
 - [x] Reprovision and boot `alice`, then confirm host-to-guest ping and SSH over the private bridge.
 - [x] Reprovision and boot `bob`, then confirm guest isolation, persistence, and snapshot/restore on the live Droplet.
+
+## Production Bring-Up
+
+- [x] Verify the new production Droplet prerequisites and mount the attached XFS volume at `/var/lib/openclaw`.
+- [x] Sync the repo, run bootstrap, and validate the host configuration on the new Droplet.
+- [x] Install Firecracker and the official guest kernel, then build the shared base image on the new Droplet.
+- [x] Provision and validate the first production test VM, including SSH, egress, and persistence.
+- [ ] Install Tailscale on the host and complete tailnet enrollment, then document the final operator access pattern.

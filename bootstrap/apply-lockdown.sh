@@ -24,6 +24,7 @@ install -m 0644 "${LOCKDOWN_CANDIDATE_DIR}/10-openclaw-hardening.conf" /etc/ssh/
 install -m 0644 "${LOCKDOWN_CANDIDATE_DIR}/openclaw-sshd.local" /etc/fail2ban/jail.d/openclaw-sshd.local
 
 systemctl enable --now nftables fail2ban
+systemctl restart nftables
 systemctl restart ssh
 
 echo "lockdown applied"
