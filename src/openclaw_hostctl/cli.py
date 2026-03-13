@@ -27,6 +27,14 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument("--user-config", type=Path)
     provision.add_argument("--disk-size-gib", type=int)
 
+    activate = subparsers.add_parser("activate-user")
+    activate.add_argument("user_id")
+    activate.add_argument("--user-config", type=Path)
+    activate.add_argument("--activation-config", type=Path)
+    activate.add_argument("--secrets-env", type=Path)
+    activate.add_argument("--force", action="store_true")
+    activate.add_argument("--restart", action="store_true")
+
     start = subparsers.add_parser("start")
     start.add_argument("user_id")
 
@@ -91,6 +99,18 @@ def main() -> int:
         print(json.dumps(record.to_dict(), indent=2))
         return 0
 
+    if args.command == "activate-user":
+        result = controller.activate_user(
+            args.user_id,
+            user_config_path=args.user_config,
+            activation_config_path=args.activation_config,
+            secrets_env_path=args.secrets_env,
+            force=args.force,
+            restart=args.restart,
+        )
+        print(json.dumps(result, indent=2))
+        return 0
+
     if args.command == "start":
         controller.start_user(args.user_id)
         print(f"started {args.user_id}")
@@ -135,4 +155,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

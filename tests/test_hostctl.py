@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from openclaw_hostctl.config import save_user_record
 from openclaw_hostctl.hostctl import HostController, render_guest_network
 from openclaw_hostctl.models import HostConfig, UserRecord
 from openclaw_hostctl.firecracker import make_mac_address, make_tap_name, render_firecracker_config
@@ -50,6 +54,132 @@ class HostControllerTests(unittest.TestCase):
 
     def test_sanitize_snapshot_label(self) -> None:
         self.assertEqual(sanitize_snapshot_label("Before Upgrade!"), "before-upgrade")
+
+    def test_activate_user_reuses_stored_inputs_when_not_overridden(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            controller.init_layout()
+            record = UserRecord(
+                user_id="alice",
+                display_name="Alice",
+                machine_name="openclaw-alice",
+                ip_address="172.31.0.10",
+                mac_address="06:00:ac:1f:00:0a",
+                tap_name="ocalice",
+                rootfs_path=str(config.user_rootfs_path("alice")),
+                created_at="2026-03-10T00:00:00Z",
+            )
+            config.user_dir("alice").mkdir(parents=True, exist_ok=True)
+            save_user_record(config.user_record_path("alice"), record)
+            Path(record.rootfs_path).write_text("image", encoding="utf-8")
+            config.user_config_store_path("alice").write_text(
+                json.dumps({"profile": "default"}) + "\n",
+                encoding="utf-8",
+            )
+            config.activation_config_store_path("alice").write_text(
+                json.dumps({"slack_user_id": "U123"}) + "\n",
+                encoding="utf-8",
+            )
+            config.activation_secrets_store_path("alice").write_text(
+                "OPENAI_API_KEY=secret\n",
+                encoding="utf-8",
+            )
+            mount_dir = storage_root / "mounts/alice"
+            mount_dir.mkdir(parents=True)
+
+            @contextlib.contextmanager
+            def fake_mount(_image: Path, _mount_base: Path, _mount_name: str):
+                yield mount_dir
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch("openclaw_hostctl.hostctl.mounted_image", fake_mount),
+                mock.patch.object(HostController, "is_running", return_value=False),
+            ):
+                result = controller.activate_user(
+                    "alice",
+                    user_config_path=None,
+                    activation_config_path=None,
+                    secrets_env_path=None,
+                    force=False,
+                    restart=False,
+                )
+
+            self.assertEqual(result["user_id"], "alice")
+            self.assertFalse(result["restarted"])
+            self.assertEqual(
+                (mount_dir / "etc/openclaw/config.json").read_text(encoding="utf-8").strip(),
+                '{"profile": "default"}',
+            )
+            self.assertEqual(
+                (mount_dir / "etc/openclaw/activation.json").read_text(encoding="utf-8").strip(),
+                '{"slack_user_id": "U123"}',
+            )
+            self.assertEqual(
+                (mount_dir / "etc/openclaw/secrets.env").read_text(encoding="utf-8"),
+                "OPENAI_API_KEY=secret\n",
+            )
+
+    def test_activate_user_persists_new_inputs_for_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            controller.init_layout()
+            record = UserRecord(
+                user_id="alice",
+                display_name="Alice",
+                machine_name="openclaw-alice",
+                ip_address="172.31.0.10",
+                mac_address="06:00:ac:1f:00:0a",
+                tap_name="ocalice",
+                rootfs_path=str(config.user_rootfs_path("alice")),
+                created_at="2026-03-10T00:00:00Z",
+            )
+            config.user_dir("alice").mkdir(parents=True, exist_ok=True)
+            save_user_record(config.user_record_path("alice"), record)
+            Path(record.rootfs_path).write_text("image", encoding="utf-8")
+            mount_dir = storage_root / "mounts/alice"
+            mount_dir.mkdir(parents=True)
+            new_user_config = storage_root / "incoming-user-config.json"
+            new_user_config.write_text('{"profile": "prod"}\n', encoding="utf-8")
+            new_activation_config = storage_root / "incoming-activation-config.json"
+            new_activation_config.write_text('{"slack_user_id": "U999"}\n', encoding="utf-8")
+            new_secrets = storage_root / "incoming-secrets.env"
+            new_secrets.write_text("OPENAI_API_KEY=prod\n", encoding="utf-8")
+
+            @contextlib.contextmanager
+            def fake_mount(_image: Path, _mount_base: Path, _mount_name: str):
+                yield mount_dir
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch("openclaw_hostctl.hostctl.mounted_image", fake_mount),
+                mock.patch.object(HostController, "is_running", return_value=False),
+            ):
+                controller.activate_user(
+                    "alice",
+                    user_config_path=new_user_config,
+                    activation_config_path=new_activation_config,
+                    secrets_env_path=new_secrets,
+                    force=False,
+                    restart=False,
+                )
+
+            self.assertEqual(
+                config.user_config_store_path("alice").read_text(encoding="utf-8"),
+                '{"profile": "prod"}\n',
+            )
+            self.assertEqual(
+                config.activation_config_store_path("alice").read_text(encoding="utf-8"),
+                '{"slack_user_id": "U999"}\n',
+            )
+            self.assertEqual(
+                config.activation_secrets_store_path("alice").read_text(encoding="utf-8"),
+                "OPENAI_API_KEY=prod\n",
+            )
 
 
 class FirecrackerTests(unittest.TestCase):

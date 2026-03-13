@@ -31,3 +31,9 @@
 - [x] Install Firecracker and the official guest kernel, then build the shared base image on the new Droplet.
 - [x] Provision and validate the first production test VM, including SSH, egress, and persistence.
 - [ ] Install Tailscale on the host and complete tailnet enrollment, then document the final operator access pattern.
+
+## Next Feature
+
+- [x] Inspect the existing per-user profile flow and determine whether it can back a reusable activation step.
+- [x] Add an `activate-user` command that persists activation inputs and reapplies them into an existing guest.
+- [x] Document the provision-vs-activate workflow and verify it with automated tests.

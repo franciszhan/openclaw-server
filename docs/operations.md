@@ -81,6 +81,13 @@ Then edit `/etc/openclaw/host-config.json` and confirm:
 - `shared_skills_dir` contains the approved shared skills you want copied into guests
 - `allow_guest_egress` is `true` if guests need to call public LLM APIs directly; leave it `false` only if you plan to provide an internal relay or proxy
 
+If you want a repo-managed starting set of company skills, sync the bundled files before building the base image:
+
+```bash
+sudo mkdir -p /var/lib/openclaw/shared-skills
+sudo rsync -a /opt/openclaw-server/shared-skills/ /var/lib/openclaw/shared-skills/
+```
+
 DigitalOcean-specific recommendation:
 
 - keep the Droplet Console available throughout the entire first run
@@ -159,7 +166,7 @@ Example:
 
 ```bash
 export OPENCLAW_INSTALL_CMD='curl -fsSL https://internal.example/install-openclaw.sh | bash'
-export SHARED_SKILLS_DIR=/srv/openclaw/company-skills
+export SHARED_SKILLS_DIR=/var/lib/openclaw/shared-skills
 sudo ./guest/build-base-image.sh
 ```
 
@@ -200,6 +207,8 @@ For a fresh Droplet, skip this section and continue with the normal install flow
 
 Create an employee-specific OpenClaw config file first. The provisioning flow writes it into `/etc/openclaw/config.json` inside the guest and injects the approved shared skills.
 
+See [employee-onboarding.md](/Users/franciszhan/Documents/GitHub/openclaw-server/docs/employee-onboarding.md) for the recommended intake checklist before provisioning.
+
 ```bash
 sudo scripts/openclaw-hostctl \
   --config /etc/openclaw/host-config.json \
@@ -220,6 +229,31 @@ Provisioning does all of this:
 - creates an initial rollback snapshot
 
 At start time, the host runtime path also recreates or reuses the guest tap device, attaches it to the private bridge, and enables bridge-port isolation so one guest cannot directly talk to another over `ocbr0`.
+
+## Activate A User
+
+Provisioning handles the VM and base per-user config. Use activation for the app-specific inputs you may only learn later, such as a Slack user ID allowlist entry or an OpenAI key.
+
+The existing provisioned `--user-config` is reused automatically from the host-side VM directory unless you override it with a new `--user-config` path.
+
+```bash
+sudo openclaw-hostctl activate-user alice \
+  --activation-config /srv/openclaw/activation-configs/alice.json \
+  --secrets-env /srv/openclaw/activation-secrets/alice.env \
+  --restart
+```
+
+Activation does all of this:
+
+- stops the VM first if it is running and you pass `--force`
+- persists the latest activation inputs under the user VM directory for reuse
+- mounts the guest disk offline
+- writes `/etc/openclaw/config.json` if a stored or explicit user config exists
+- writes `/etc/openclaw/activation.json` if an activation config exists
+- writes `/etc/openclaw/secrets.env` if a secrets env file exists
+- optionally starts the VM again with `--restart`
+
+This keeps the host-side workflow repeatable even if you need to reprovision or reapply the same employee-specific setup later.
 
 ## Start, Stop, And Inspect
 
@@ -320,6 +354,7 @@ Recommended usage:
 - keep the guest bridge private and do not advertise `172.31.0.0/24` as a tailnet subnet route unless you intentionally want tailnet-wide guest reachability
 
 The staged firewall already allows SSH arriving on `tailscale0`, so standard SSH over Tailscale works after lockdown without opening additional public inbound paths.
+It also allows inbound UDP `41641` on the public interface so `tailscaled` can keep the host reachable from the tailnet after lockdown.
 
 ## Snapshot And Restore
 

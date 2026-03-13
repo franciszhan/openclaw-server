@@ -97,12 +97,70 @@ class HostController:
         if disk_size_gib:
             extend_ext4_image(Path(record.rootfs_path), disk_size_gib)
 
+        stored_user_config_path = self._store_optional_file(
+            user_config_path,
+            self.config.user_config_store_path(user_id),
+        )
         with mounted_image(Path(record.rootfs_path), self.config.loop_mount_base, user_id) as mount_dir:
-            self._seed_guest_files(mount_dir, record, user_config_path)
+            self._seed_guest_files(mount_dir, record, stored_user_config_path)
 
         save_user_record(self.config.user_record_path(user_id), record)
         self.create_snapshot(user_id, "initial")
         return record
+
+    def activate_user(
+        self,
+        user_id: str,
+        *,
+        user_config_path: Path | None,
+        activation_config_path: Path | None,
+        secrets_env_path: Path | None,
+        force: bool,
+        restart: bool,
+    ) -> dict[str, object]:
+        require_root()
+        user = self._load_user(user_id)
+        was_running = self.is_running(user_id)
+        if was_running:
+            if not force:
+                raise ValueError("activation requires the microVM to be stopped; pass --force to stop it")
+            self.stop_user(user_id)
+
+        stored_user_config = self._resolve_stored_input(
+            user_config_path,
+            self.config.user_config_store_path(user_id),
+        )
+        stored_activation_config = self._resolve_stored_input(
+            activation_config_path,
+            self.config.activation_config_store_path(user_id),
+        )
+        stored_secrets_env = self._resolve_stored_input(
+            secrets_env_path,
+            self.config.activation_secrets_store_path(user_id),
+        )
+
+        with mounted_image(Path(user.rootfs_path), self.config.loop_mount_base, user_id) as mount_dir:
+            self._apply_activation_files(
+                mount_dir,
+                stored_user_config,
+                stored_activation_config,
+                stored_secrets_env,
+            )
+
+        restarted = False
+        if restart or was_running:
+            self.start_user(user_id)
+            restarted = True
+
+        return {
+            "user_id": user_id,
+            "applied_user_config": str(stored_user_config) if stored_user_config else None,
+            "applied_activation_config": (
+                str(stored_activation_config) if stored_activation_config else None
+            ),
+            "applied_secrets_env": str(stored_secrets_env) if stored_secrets_env else None,
+            "restarted": restarted,
+        }
 
     def create_snapshot(self, user_id: str, label: str) -> Path:
         require_root()
@@ -263,6 +321,31 @@ class HostController:
             destination.parent.mkdir(parents=True, exist_ok=True)
             copy_tree(self.config.shared_skills_dir, destination)
 
+    def _apply_activation_files(
+        self,
+        mount_dir: Path,
+        user_config_path: Path | None,
+        activation_config_path: Path | None,
+        secrets_env_path: Path | None,
+    ) -> None:
+        config_dir = mount_dir / "etc/openclaw"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        if user_config_path:
+            destination = config_dir / "config.json"
+            shutil.copyfile(user_config_path, destination)
+            os.chmod(destination, 0o640)
+
+        if activation_config_path:
+            destination = config_dir / "activation.json"
+            shutil.copyfile(activation_config_path, destination)
+            os.chmod(destination, 0o640)
+
+        if secrets_env_path:
+            destination = config_dir / "secrets.env"
+            shutil.copyfile(secrets_env_path, destination)
+            os.chmod(destination, 0o600)
+
     def _assert_stopped(self, user_id: str) -> None:
         if self.is_running(user_id):
             raise ValueError("operation requires the microVM to be stopped")
@@ -282,6 +365,21 @@ class HostController:
         run(["ip", "link", "set", tap_name, "master", self.config.bridge_name])
         run(["bridge", "link", "set", "dev", tap_name, "isolated", "on"])
         run(["ip", "link", "set", tap_name, "up"])
+
+    def _store_optional_file(self, source_path: Path | None, destination_path: Path) -> Path | None:
+        if not source_path:
+            return None
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, destination_path)
+        return destination_path
+
+    def _resolve_stored_input(self, source_path: Path | None, destination_path: Path) -> Path | None:
+        stored_path = self._store_optional_file(source_path, destination_path)
+        if stored_path:
+            return stored_path
+        if destination_path.exists():
+            return destination_path
+        return None
 
 
 def render_guest_network(config: HostConfig, guest_ip: str, guest_mac: str) -> str:

@@ -24,6 +24,7 @@ Rendered `nftables` policy:
 
 - default drop on inbound and forwarded traffic
 - allow established and loopback traffic
+- allow inbound UDP `41641` on the public interface so Tailscale can maintain tailnet connectivity
 - allow host SSH only from configured admin CIDRs
 - allow host access from the private OpenClaw bridge
 - rely on bridge port isolation so guest ports on the host bridge cannot directly exchange frames
