@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .config import load_host_config
@@ -29,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     activate = subparsers.add_parser("activate-user")
     activate.add_argument("user_id")
+    activate.add_argument("--manifest", type=Path)
     activate.add_argument("--user-config", type=Path)
     activate.add_argument("--activation-config", type=Path)
     activate.add_argument("--secrets-env", type=Path)
@@ -66,6 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_cleanup = runtime_subparsers.add_parser("cleanup")
     runtime_cleanup.add_argument("user_id")
 
+    shared_access = subparsers.add_parser("shared-access")
+    shared_access_subparsers = shared_access.add_subparsers(
+        dest="shared_access_command",
+        required=True,
+    )
+    shared_access_execute = shared_access_subparsers.add_parser("execute")
+    shared_access_execute.add_argument("user_id")
+    shared_access_execute.add_argument("--timeout-seconds", type=int, default=60)
+
     return parser
 
 
@@ -102,6 +113,7 @@ def main() -> int:
     if args.command == "activate-user":
         result = controller.activate_user(
             args.user_id,
+            manifest_path=args.manifest,
             user_config_path=args.user_config,
             activation_config_path=args.activation_config,
             secrets_env_path=args.secrets_env,
@@ -147,6 +159,17 @@ def main() -> int:
         if args.runtime_command == "cleanup":
             controller.runtime_cleanup(args.user_id)
             print(f"cleaned runtime for {args.user_id}")
+            return 0
+
+    if args.command == "shared-access":
+        if args.shared_access_command == "execute":
+            payload = json.load(sys.stdin)
+            result = controller.execute_shared_access(
+                args.user_id,
+                payload,
+                timeout_seconds=args.timeout_seconds,
+            )
+            print(json.dumps(result, indent=2))
             return 0
 
     parser.error("unknown command")

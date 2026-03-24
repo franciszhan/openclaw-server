@@ -8,7 +8,17 @@ from pathlib import Path
 from unittest import mock
 
 from openclaw_hostctl.config import save_user_record
-from openclaw_hostctl.hostctl import HostController, render_guest_network
+from openclaw_hostctl.hostctl import (
+    HostController,
+    ensure_guest_google_oauth_runtime,
+    render_email_intro_lookup_script,
+    render_guest_network,
+    render_google_auth_status_wrapper,
+    render_google_connect_wrapper,
+    render_google_oauth_exchange_script,
+    render_google_oauth_start_script,
+    render_google_finish_wrapper,
+)
 from openclaw_hostctl.models import HostConfig, UserRecord
 from openclaw_hostctl.firecracker import make_mac_address, make_tap_name, render_firecracker_config
 from openclaw_hostctl.disk import sanitize_snapshot_label
@@ -31,12 +41,75 @@ def example_config(storage_root: Path) -> HostConfig:
         smt=False,
         allow_guest_egress=True,
         admin_ssh_keys_path=storage_root / "admin_authorized_keys",
+        automation_ssh_private_key_path=storage_root / "automation_guest_key",
+        automation_ssh_public_key_path=storage_root / "automation_guest_key.pub",
         shared_skills_dir=None,
         loop_mount_base=storage_root / "mnt",
     )
 
 
 class HostControllerTests(unittest.TestCase):
+    def test_google_oauth_scripts_request_gmail_and_calendar_readonly(self) -> None:
+        start_script = render_google_oauth_start_script()
+        exchange_script = render_google_oauth_exchange_script()
+        status_script = render_google_auth_status_wrapper()
+        connect_wrapper = render_google_connect_wrapper()
+        finish_wrapper = render_google_finish_wrapper()
+        self.assertIn("gmail.readonly", start_script)
+        self.assertIn("calendar.readonly", start_script)
+        self.assertIn("google-gmail-token.json", exchange_script)
+        self.assertIn("connect-google", status_script)
+        self.assertIn("gmail-oauth-start.mjs", connect_wrapper)
+        self.assertIn("gmail-oauth-exchange.mjs", finish_wrapper)
+
+    def test_ensure_guest_google_oauth_runtime_copies_shared_client_without_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mount_dir = Path(tmp_dir) / "mount"
+            client_path = Path(tmp_dir) / "google-oauth-client.json"
+            client_path.write_text(
+                json.dumps(
+                    {
+                        "installed": {
+                            "client_id": "client-id",
+                            "client_secret": "client-secret",
+                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                            "token_uri": "https://oauth2.googleapis.com/token",
+                        }
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state_dir = ensure_guest_google_oauth_runtime(mount_dir, client_path=client_path)
+            self.assertEqual(state_dir, mount_dir / "home/admin/.openclaw")
+            self.assertTrue(
+                (mount_dir / "home/admin/.openclaw/workspace/scripts/gmail-oauth-start.mjs").exists()
+            )
+            self.assertTrue(
+                (mount_dir / "home/admin/.openclaw/workspace/scripts/gmail-oauth-exchange.mjs").exists()
+            )
+            self.assertTrue((mount_dir / "usr/local/bin/connect-google").exists())
+            self.assertTrue((mount_dir / "usr/local/bin/finish-google").exists())
+            self.assertTrue((mount_dir / "usr/local/bin/google-auth-status").exists())
+            copied_client = json.loads(
+                (mount_dir / "home/admin/.openclaw/workspace/secrets/google-oauth-client.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(copied_client["installed"]["client_id"], "client-id")
+            self.assertFalse(
+                (mount_dir / "home/admin/.openclaw/workspace/secrets/google-gmail-token.json").exists()
+            )
+
+    def test_lookup_script_scopes_time_window_and_recent_focus(self) -> None:
+        script = render_email_intro_lookup_script()
+        self.assertIn("Search only the last 1 year of email history.", script)
+        self.assertIn("Build context from that 1-year window on the requested subject.", script)
+        self.assertIn(
+            "Unless the requester explicitly asks otherwise, focus the summary on the most recent few relevant emails.",
+            script,
+        )
+
     def test_allocate_guest_ip_uses_first_free_address(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             config = example_config(Path(tmp_dir))
@@ -55,7 +128,57 @@ class HostControllerTests(unittest.TestCase):
     def test_sanitize_snapshot_label(self) -> None:
         self.assertEqual(sanitize_snapshot_label("Before Upgrade!"), "before-upgrade")
 
-    def test_activate_user_reuses_stored_inputs_when_not_overridden(self) -> None:
+    def test_provision_guest_config_strips_openclaw_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            mount_dir = storage_root / "mount"
+            (mount_dir / "home/admin").mkdir(parents=True, exist_ok=True)
+            (mount_dir / "etc").mkdir(parents=True, exist_ok=True)
+            (mount_dir / "etc/passwd").write_text(
+                "admin:x:1000:1000::/home/admin:/bin/bash\n",
+                encoding="utf-8",
+            )
+            config.admin_ssh_keys_path.parent.mkdir(parents=True, exist_ok=True)
+            config.admin_ssh_keys_path.write_text("ssh-ed25519 AAAATEST admin@test\n", encoding="utf-8")
+            manifest_path = storage_root / "alice-manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "user_id": "alice",
+                        "profile": "default",
+                        "timezone": "America/Toronto",
+                        "openclaw": {
+                            "env": {
+                                "OPENAI_API_KEY": "sk-test",
+                            }
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            user = UserRecord(
+                user_id="alice",
+                display_name="Alice",
+                machine_name="openclaw-alice",
+                ip_address="172.31.0.10",
+                mac_address="06:00:ac:1f:00:0a",
+                tap_name="ocalice",
+                rootfs_path=str(config.user_rootfs_path("alice")),
+                created_at="2026-03-10T00:00:00Z",
+            )
+
+            with mock.patch("openclaw_hostctl.hostctl.chown_tree"):
+                controller._seed_guest_files(mount_dir, user, manifest_path)
+
+            guest_config = json.loads((mount_dir / "etc/openclaw/config.json").read_text(encoding="utf-8"))
+            self.assertEqual(guest_config["user_id"], "alice")
+            self.assertEqual(guest_config["profile"], "default")
+            self.assertNotIn("openclaw", guest_config)
+
+    def test_activate_user_manifest_writes_openclaw_runtime_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             storage_root = Path(tmp_dir)
             config = example_config(storage_root)
@@ -75,19 +198,51 @@ class HostControllerTests(unittest.TestCase):
             save_user_record(config.user_record_path("alice"), record)
             Path(record.rootfs_path).write_text("image", encoding="utf-8")
             config.user_config_store_path("alice").write_text(
-                json.dumps({"profile": "default"}) + "\n",
-                encoding="utf-8",
-            )
-            config.activation_config_store_path("alice").write_text(
-                json.dumps({"slack_user_id": "U123"}) + "\n",
-                encoding="utf-8",
-            )
-            config.activation_secrets_store_path("alice").write_text(
-                "OPENAI_API_KEY=secret\n",
+                json.dumps(
+                    {
+                        "user_id": "alice",
+                        "profile": "default",
+                        "openclaw": {
+                            "env": {
+                                "OPENAI_API_KEY": "sk-secret",
+                            },
+                            "authProfiles": {
+                                "openai:default": {
+                                    "provider": "openai",
+                                    "type": "api_key",
+                                    "keyEnv": "OPENAI_API_KEY",
+                                }
+                            },
+                            "channels": {
+                                "slack": {
+                                    "enabled": True,
+                                    "botToken": "xoxb-test",
+                                    "appToken": "xapp-test",
+                                    "allowFrom": ["U123"],
+                                }
+                            },
+                        },
+                        "slack_user_id": "UOWNER",
+                        "shared_access": {
+                            "opt_in": True,
+                            "capabilities": ["email_intro_lookup"],
+                            "email_intro_lookup": {
+                                "command": ["python3", "lookup.py", "{request_path}", "{response_path}"],
+                            },
+                        },
+                    }
+                )
+                + "\n",
                 encoding="utf-8",
             )
             mount_dir = storage_root / "mounts/alice"
             mount_dir.mkdir(parents=True)
+            (mount_dir / "etc").mkdir(parents=True, exist_ok=True)
+            (mount_dir / "etc/passwd").write_text(
+                "admin:x:1000:1000::/home/admin:/bin/bash\n",
+                encoding="utf-8",
+            )
+            (mount_dir / "home/admin").mkdir(parents=True, exist_ok=True)
 
             @contextlib.contextmanager
             def fake_mount(_image: Path, _mount_base: Path, _mount_name: str):
@@ -96,10 +251,13 @@ class HostControllerTests(unittest.TestCase):
             with (
                 mock.patch("openclaw_hostctl.hostctl.require_root"),
                 mock.patch("openclaw_hostctl.hostctl.mounted_image", fake_mount),
+                mock.patch("openclaw_hostctl.hostctl.chown_tree"),
+                mock.patch("openclaw_hostctl.hostctl.os.chown"),
                 mock.patch.object(HostController, "is_running", return_value=False),
             ):
                 result = controller.activate_user(
                     "alice",
+                    manifest_path=None,
                     user_config_path=None,
                     activation_config_path=None,
                     secrets_env_path=None,
@@ -111,18 +269,108 @@ class HostControllerTests(unittest.TestCase):
             self.assertFalse(result["restarted"])
             self.assertEqual(
                 (mount_dir / "etc/openclaw/config.json").read_text(encoding="utf-8").strip(),
-                '{"profile": "default"}',
+                '{\n  "user_id": "alice",\n  "profile": "default"\n}',
             )
             self.assertEqual(
-                (mount_dir / "etc/openclaw/activation.json").read_text(encoding="utf-8").strip(),
-                '{"slack_user_id": "U123"}',
+                (mount_dir / "home/admin/.openclaw/.env").read_text(encoding="utf-8"),
+                "OPENAI_API_KEY=sk-secret\n",
+            )
+            openclaw_config = json.loads(
+                (mount_dir / "home/admin/.openclaw/openclaw.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
-                (mount_dir / "etc/openclaw/secrets.env").read_text(encoding="utf-8"),
-                "OPENAI_API_KEY=secret\n",
+                openclaw_config["agents"]["defaults"]["model"]["primary"],
+                "openai/gpt-5.4",
+            )
+            self.assertEqual(openclaw_config["tools"]["profile"], "coding")
+            self.assertEqual(openclaw_config["commands"]["native"], "auto")
+            self.assertEqual(openclaw_config["session"]["dmScope"], "per-channel-peer")
+            self.assertEqual(openclaw_config["plugins"]["entries"]["slack"]["enabled"], True)
+            self.assertEqual(openclaw_config["channels"]["slack"]["enabled"], True)
+            self.assertEqual(openclaw_config["channels"]["slack"]["botToken"], "xoxb-test")
+            self.assertEqual(openclaw_config["gateway"]["auth"]["mode"], "token")
+            self.assertTrue(openclaw_config["gateway"]["auth"]["token"])
+            auth_profiles = json.loads(
+                (
+                    mount_dir / "home/admin/.openclaw/agents/main/agent/auth-profiles.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                auth_profiles["profiles"]["openai:default"]["keyRef"]["id"],
+                "OPENAI_API_KEY",
+            )
+            slack_allow_from = json.loads(
+                (
+                    mount_dir / "home/admin/.openclaw/credentials/slack-default-allowFrom.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(slack_allow_from["allowFrom"], ["U123"])
+            self.assertEqual(
+                oct((mount_dir / "home/admin/.openclaw").stat().st_mode & 0o777),
+                "0o700",
+            )
+            self.assertEqual(
+                oct((mount_dir / "home/admin/.openclaw/credentials").stat().st_mode & 0o777),
+                "0o700",
+            )
+            self.assertTrue(
+                (mount_dir / "home/admin/.config/systemd/user/openclaw-gateway.service").exists()
+            )
+            self.assertTrue(
+                (
+                    mount_dir
+                    / "home/admin/.config/systemd/user/default.target.wants/openclaw-gateway.service"
+                ).is_symlink()
+            )
+            self.assertTrue((mount_dir / "var/lib/systemd/linger/admin").exists())
+            self.assertTrue(
+                (mount_dir / "usr/local/sbin/openclaw-activation-refresh.sh").exists()
+            )
+            self.assertTrue(
+                (mount_dir / "etc/systemd/system/openclaw-activation-refresh.service").exists()
+            )
+            self.assertTrue(
+                (
+                    mount_dir
+                    / "etc/systemd/system/multi-user.target.wants/openclaw-activation-refresh.service"
+                ).is_symlink()
+            )
+            self.assertTrue(
+                (mount_dir / "var/lib/openclaw/bootstrap/pending-gateway-restart").exists()
+            )
+            shared_access_config = json.loads(
+                (mount_dir / "home/admin/.openclaw/shared-access.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(shared_access_config["opt_in"])
+            self.assertEqual(shared_access_config["slack_user_id"], "UOWNER")
+            self.assertEqual(
+                shared_access_config["email_intro_lookup"]["command"][2],
+                "{request_path}",
+            )
+            self.assertEqual(
+                shared_access_config["email_intro_lookup"]["allowedRecipientFilters"],
+                [
+                    "leads@tribecap.co",
+                    "portfolio-passive@tribecap.co",
+                    "portfolio-active@tribecap.co",
+                    "crypto-passive@tribecap.co",
+                    "crypto@tribecap.co",
+                ],
+            )
+            self.assertTrue((mount_dir / "usr/local/bin/openclaw-shared-access").exists())
+            self.assertTrue((mount_dir / "usr/local/bin/company-email-intro-lookup").exists())
+            self.assertTrue((mount_dir / "usr/local/bin/company-email-intro-draft").exists())
+            self.assertTrue((mount_dir / "usr/local/bin/pkg-install").exists())
+            self.assertTrue((mount_dir / "usr/local/bin/pkg-search").exists())
+            self.assertTrue((mount_dir / "usr/local/sbin/openclaw-apt-install-root").exists())
+            self.assertEqual(
+                (
+                    mount_dir / "etc/sudoers.d/openclaw-package-install"
+                ).read_text(encoding="utf-8").strip(),
+                "admin ALL=(root) NOPASSWD: /usr/local/sbin/openclaw-apt-install-root",
             )
 
-    def test_activate_user_persists_new_inputs_for_reuse(self) -> None:
+    def test_activate_user_persists_new_manifest_for_reuse(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             storage_root = Path(tmp_dir)
             config = example_config(storage_root)
@@ -143,12 +391,27 @@ class HostControllerTests(unittest.TestCase):
             Path(record.rootfs_path).write_text("image", encoding="utf-8")
             mount_dir = storage_root / "mounts/alice"
             mount_dir.mkdir(parents=True)
-            new_user_config = storage_root / "incoming-user-config.json"
-            new_user_config.write_text('{"profile": "prod"}\n', encoding="utf-8")
-            new_activation_config = storage_root / "incoming-activation-config.json"
-            new_activation_config.write_text('{"slack_user_id": "U999"}\n', encoding="utf-8")
-            new_secrets = storage_root / "incoming-secrets.env"
-            new_secrets.write_text("OPENAI_API_KEY=prod\n", encoding="utf-8")
+            (mount_dir / "etc").mkdir(parents=True, exist_ok=True)
+            (mount_dir / "etc/passwd").write_text(
+                "admin:x:1000:1000::/home/admin:/bin/bash\n",
+                encoding="utf-8",
+            )
+            (mount_dir / "home/admin").mkdir(parents=True, exist_ok=True)
+            manifest_path = storage_root / "incoming-manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "profile": "prod",
+                        "openclaw": {
+                            "env": {
+                                "OPENAI_API_KEY": "prod",
+                            }
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
             @contextlib.contextmanager
             def fake_mount(_image: Path, _mount_base: Path, _mount_name: str):
@@ -157,29 +420,77 @@ class HostControllerTests(unittest.TestCase):
             with (
                 mock.patch("openclaw_hostctl.hostctl.require_root"),
                 mock.patch("openclaw_hostctl.hostctl.mounted_image", fake_mount),
+                mock.patch("openclaw_hostctl.hostctl.chown_tree"),
+                mock.patch("openclaw_hostctl.hostctl.os.chown"),
                 mock.patch.object(HostController, "is_running", return_value=False),
             ):
                 controller.activate_user(
                     "alice",
-                    user_config_path=new_user_config,
-                    activation_config_path=new_activation_config,
-                    secrets_env_path=new_secrets,
+                    manifest_path=manifest_path,
+                    user_config_path=None,
+                    activation_config_path=None,
+                    secrets_env_path=None,
                     force=False,
                     restart=False,
                 )
 
             self.assertEqual(
                 config.user_config_store_path("alice").read_text(encoding="utf-8"),
-                '{"profile": "prod"}\n',
+                manifest_path.read_text(encoding="utf-8"),
             )
-            self.assertEqual(
-                config.activation_config_store_path("alice").read_text(encoding="utf-8"),
-                '{"slack_user_id": "U999"}\n',
+
+    def test_sync_coordinator_directory_from_manifest_uses_slack_member_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            user = UserRecord(
+                user_id="francis",
+                display_name="Francis Zhan",
+                machine_name="openclaw-francis",
+                ip_address="172.31.0.11",
+                mac_address="06:00:ac:1f:00:0b",
+                tap_name="ocfrancis",
+                rootfs_path=str(config.user_rootfs_path("francis")),
+                created_at="2026-03-10T00:00:00Z",
             )
-            self.assertEqual(
-                config.activation_secrets_store_path("alice").read_text(encoding="utf-8"),
-                "OPENAI_API_KEY=prod\n",
+            coordinator_config_path = storage_root / "coordinator-config.json"
+            coordinator_state_root = storage_root / "coordinator-state"
+            coordinator_config_path.write_text(
+                json.dumps(
+                    {
+                        "state_root": str(coordinator_state_root),
+                        "relay_command": [
+                            "openclaw-hostctl",
+                            "shared-access",
+                            "execute",
+                            "{owner_vm_user_id}",
+                        ],
+                        "request_timeout_seconds": 180,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
             )
+
+            controller._sync_coordinator_directory_from_manifest(
+                user,
+                {
+                    "user_id": "francis",
+                    "slack_user_id": "U0275195STW",
+                    "shared_access": {
+                        "opt_in": True,
+                        "capabilities": ["email_intro_lookup"],
+                    },
+                },
+                coordinator_config_path=coordinator_config_path,
+            )
+
+            directory = json.loads((coordinator_state_root / "directory.json").read_text(encoding="utf-8"))
+            self.assertEqual(directory["U0275195STW"]["vm_user_id"], "francis")
+            self.assertEqual(directory["U0275195STW"]["display_name"], "Francis Zhan")
+            self.assertEqual(directory["U0275195STW"]["vm_address"], "172.31.0.11")
+            self.assertTrue(directory["U0275195STW"]["opt_in"])
 
 
 class FirecrackerTests(unittest.TestCase):

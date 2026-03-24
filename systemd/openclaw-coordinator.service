@@ -1,0 +1,18 @@
+[Unit]
+Description=OpenClaw AgentCoordinator Slack broker
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/openclaw/coordinator.env
+ExecStart=/usr/local/bin/openclaw-coordinatorctl --config /etc/openclaw/coordinator-config.json serve-slack
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

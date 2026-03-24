@@ -24,8 +24,14 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
   fail2ban \
   nftables \
   python3 \
+  python3-pip \
+  python3-requests \
   rsync \
   unattended-upgrades
+
+if ! python3 -c 'import websocket' >/dev/null 2>&1; then
+  python3 -m pip install --break-system-packages websocket-client
+fi
 
 mkdir -p /etc/openclaw "${LOCKDOWN_CANDIDATE_DIR}" /usr/local/bin /usr/local/lib/openclaw /etc/ssh/sshd_config.d \
   /etc/fail2ban/jail.d /etc/sysctl.d /etc/systemd/journald.conf.d
@@ -44,10 +50,18 @@ export OPENCLAW_HOST_ROOT="${INSTALL_ROOT}"
 exec "${INSTALL_ROOT}/scripts/openclaw-hostctl" "\$@"
 EOF
 chmod 0755 /usr/local/bin/openclaw-hostctl
+cat >/usr/local/bin/openclaw-coordinatorctl <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export OPENCLAW_HOST_ROOT="${INSTALL_ROOT}"
+exec "${INSTALL_ROOT}/scripts/openclaw-coordinatorctl" "\$@"
+EOF
+chmod 0755 /usr/local/bin/openclaw-coordinatorctl
 install -m 0755 "${INSTALL_ROOT}/bootstrap/openclaw-network-setup.sh" /usr/local/lib/openclaw/openclaw-network-setup.sh
 install -m 0755 "${INSTALL_ROOT}/bootstrap/render-lockdown-config.sh" /usr/local/lib/openclaw/render-lockdown-config.sh
 install -m 0644 "${INSTALL_ROOT}/bootstrap/nftables-openclaw.nft.tpl" /usr/local/lib/openclaw/nftables-openclaw.nft.tpl
 install -m 0644 "${INSTALL_ROOT}/systemd/openclaw-vm@.service" /etc/systemd/system/openclaw-vm@.service
+install -m 0644 "${INSTALL_ROOT}/systemd/openclaw-coordinator.service" /etc/systemd/system/openclaw-coordinator.service
 install -m 0644 "${INSTALL_ROOT}/bootstrap/openclaw-network.service" /etc/systemd/system/openclaw-network.service
 install -m 0755 "${INSTALL_ROOT}/bootstrap/apply-lockdown.sh" /usr/local/lib/openclaw/apply-lockdown.sh
 install -m 0644 "${INSTALL_ROOT}/bootstrap/sshd-hardening.conf" "${LOCKDOWN_CANDIDATE_DIR}/10-openclaw-hardening.conf"

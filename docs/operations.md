@@ -205,7 +205,7 @@ For a fresh Droplet, skip this section and continue with the normal install flow
 
 ## Provision A User
 
-Create an employee-specific OpenClaw config file first. The provisioning flow writes it into `/etc/openclaw/config.json` inside the guest and injects the approved shared skills.
+Create one employee manifest file first. The provisioning flow stores it with the VM, writes only the non-OpenClaw metadata into `/etc/openclaw/config.json` inside the guest, and injects the approved shared skills.
 
 See [employee-onboarding.md](/Users/franciszhan/Documents/GitHub/openclaw-server/docs/employee-onboarding.md) for the recommended intake checklist before provisioning.
 
@@ -232,28 +232,149 @@ At start time, the host runtime path also recreates or reuses the guest tap devi
 
 ## Activate A User
 
-Provisioning handles the VM and base per-user config. Use activation for the app-specific inputs you may only learn later, such as a Slack user ID allowlist entry or an OpenAI key.
-
-The existing provisioned `--user-config` is reused automatically from the host-side VM directory unless you override it with a new `--user-config` path.
+Provisioning handles the VM and stores the full employee manifest. Activation applies the OpenClaw-specific parts of that manifest directly into the real OpenClaw state directory.
 
 ```bash
 sudo openclaw-hostctl activate-user alice \
-  --activation-config /srv/openclaw/activation-configs/alice.json \
-  --secrets-env /srv/openclaw/activation-secrets/alice.env \
+  --manifest /srv/openclaw/user-configs/alice.json \
   --restart
 ```
 
 Activation does all of this:
 
 - stops the VM first if it is running and you pass `--force`
-- persists the latest activation inputs under the user VM directory for reuse
+- persists the latest manifest under the user VM directory for reuse
 - mounts the guest disk offline
-- writes `/etc/openclaw/config.json` if a stored or explicit user config exists
-- writes `/etc/openclaw/activation.json` if an activation config exists
-- writes `/etc/openclaw/secrets.env` if a secrets env file exists
+- writes `/home/admin/.openclaw/.env` from `openclaw.env`
+- writes `/home/admin/.openclaw/openclaw.json` from the manifest OpenClaw config
+- writes `/home/admin/.openclaw/agents/main/agent/auth-profiles.json` with env-backed API key refs
+- writes `/home/admin/.openclaw/credentials/slack-default-allowFrom.json` from the Slack allowlist
+- writes `/home/admin/.openclaw/shared-access.json` from the per-user shared access config
+- defaults `agents.defaults.model.primary` to `openai/gpt-5.4` unless the manifest overrides it
+- ensures `gateway.auth.token` exists
+- installs and enables the user-level `openclaw-gateway.service`
+- queues a guest-side gateway reload/restart on the next boot so the new config is live automatically
+- enables linger for `admin`
+- locks `/home/admin/.openclaw` and `/home/admin/.openclaw/credentials` down to `0700`
+- installs `/usr/local/bin/openclaw-shared-access` for typed coordinator-only shared access
+- installs `/usr/local/bin/company-email-intro-lookup` and `/usr/local/bin/company-email-intro-draft` as the default owner-side shared-access commands
+- installs `/usr/local/bin/pkg-search` and `/usr/local/bin/pkg-install` for constrained guest package management without granting a general root shell
 - optionally starts the VM again with `--restart`
 
 This keeps the host-side workflow repeatable even if you need to reprovision or reapply the same employee-specific setup later.
+
+Recommended post-activation check:
+
+```bash
+ssh -J root@YOUR_DROPLET_PUBLIC_IP admin@172.31.0.10
+openclaw status
+```
+
+Expect:
+
+- Gateway reachable
+- Slack `OK`
+- OpenAI auth profile present
+- no critical security warnings about missing gateway auth
+
+If you modify OpenClaw config on a running guest after activation instead of re-running `activate-user --restart`, restart the gateway inside the guest:
+
+```bash
+openclaw gateway restart
+```
+
+Use that only for in-place config edits. A fresh `activate-user --restart` should already leave the gateway in the correct state.
+
+## Coordinator Shared Access
+
+The cross-agent Slack coordinator is a separate service with its own config and state root.
+
+Example config:
+
+```json
+{
+  "state_root": "/var/lib/openclaw/coordinator",
+  "relay_command": [
+    "ssh",
+    "root@HOST_TAILSCALE_IP",
+    "openclaw-hostctl",
+    "shared-access",
+    "execute",
+    "{owner_vm_user_id}"
+  ],
+  "coordinator_slack_user_id": "UCOORDINATOR",
+  "request_timeout_seconds": 60,
+  "slack_bot_token": "xoxb-REPLACE_ME",
+  "slack_app_token": "xapp-REPLACE_ME",
+  "allow_self_requests_for_testing": false,
+  "dm_test_owner_slack_user_id": null
+}
+```
+
+The host bootstrap installs:
+
+- `/usr/local/bin/openclaw-coordinatorctl`
+- `openclaw-coordinator.service`
+
+The Slack runtime needs `websocket-client`. `install-host.sh` installs it automatically on Debian hosts.
+
+For a DM-only one-account test against a single owner VM, set:
+
+- `allow_self_requests_for_testing: true`
+- `dm_test_owner_slack_user_id` to that owner's Slack user ID
+
+Then DM the coordinator bot directly. The DM request will be routed to that owner entry even if the message does not mention another user.
+
+Minimal Slack app requirements for coordinator testing:
+
+- Socket Mode enabled
+- Interactivity enabled
+- App Home Messages enabled
+- app-level token with `connections:write`
+- bot scopes:
+  - `chat:write`
+  - `app_mentions:read`
+  - `im:history`
+- events:
+  - `app_mention`
+  - `message.im`
+
+Initialize state and register each opted-in owner manifest:
+
+```bash
+sudo openclaw-coordinatorctl --config /etc/openclaw/coordinator-config.json init-state
+sudo openclaw-coordinatorctl --config /etc/openclaw/coordinator-config.json \
+  directory upsert --manifest /srv/openclaw/user-configs/francis.json
+```
+
+Start the transport:
+
+```bash
+sudo systemctl enable --now openclaw-coordinator.service
+sudo journalctl -u openclaw-coordinator.service -f
+```
+
+The host relay command:
+
+```bash
+sudo openclaw-hostctl shared-access execute alice < request.json
+```
+
+reads one typed shared-access request from stdin, SSHes into the target VM using the host automation key, runs `/usr/local/bin/openclaw-shared-access execute`, and prints sanitized JSON to stdout.
+
+The coordinator should use this path only for typed lookup operations like:
+
+- `email_intro_lookup`
+
+If the per-user `shared_access` config does not override the command array, `email_intro_lookup` defaults to the built-in `company-email-intro-lookup` wrapper, which calls `openclaw agent --local` inside the owner VM and scopes the lookup to allowed mailbox filters such as:
+
+- `leads@tribecap.co`
+- `portfolio-passive@tribecap.co`
+- `portfolio-active@tribecap.co`
+- `crypto-passive@tribecap.co`
+- `crypto@tribecap.co`
+
+Do not use it to forward arbitrary prompts into another employee's general OpenClaw agent.
 
 ## Start, Stop, And Inspect
 

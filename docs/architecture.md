@@ -97,3 +97,35 @@ Direct SaaS model access from inside the guest depends on that egress path. If `
 - Provider-initiated Droplet live migrations are outside the control plane and must be handled operationally.
 - Base-image upgrades do not automatically rebase existing users.
 - Guest customization is file-based and simple by design.
+
+## Cross-Agent Shared Access
+
+The cross-agent Slack workflow is intentionally brokered instead of letting one employee's full agent call another employee's full agent directly.
+
+Components:
+
+- `AgentCoordinator`: a separate Slack-facing service with its own app credentials and file-backed request state
+- host relay: `openclaw-hostctl shared-access execute <user_id>`
+- owner-side scoped runner inside each opted-in VM: `/usr/local/bin/openclaw-shared-access`
+- Slack transport: a Socket Mode loop that maps Slack events and button actions onto coordinator state transitions
+
+Execution path:
+
+1. A requester asks in a public Slack thread.
+2. The coordinator parses the request into a typed operation.
+3. The owner approves or rejects in DM.
+4. The coordinator calls the host relay.
+5. The host relay SSHes into the owner VM with a host-managed automation key.
+6. The owner VM runs only the typed shared-access helper, not the main personalized OpenClaw agent.
+7. The owner reviews the result once more before publication.
+
+For one-user DM testing only, the coordinator can be placed into an explicit self-test mode. In that mode, a DM can default to a configured owner Slack ID and bypass the usual requester-versus-owner separation check. Keep that disabled outside test runs.
+
+Security properties:
+
+- default deny
+- opt-in per owner
+- typed capabilities only
+- no raw email body export by default
+- no direct guest-to-guest network dependency
+- coordinator can live off-host because the host relay terminates the private VM access path

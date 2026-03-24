@@ -8,6 +8,7 @@ The implementation is intentionally boring:
 - one per-user writable root filesystem cloned with filesystem-level copy-on-write (`cp --reflink=always`)
 - one private bridge for guest networking
 - one small host-side control CLI for lifecycle and rollback
+- one optional coordinator CLI/service for brokered cross-agent Slack access
 - systemd-managed Firecracker processes
 
 Start with:
@@ -19,6 +20,7 @@ Start with:
 Core entrypoints:
 
 - [scripts/openclaw-hostctl](/Users/franciszhan/Documents/GitHub/openclaw-server/scripts/openclaw-hostctl)
+- [scripts/openclaw-coordinatorctl](/Users/franciszhan/Documents/GitHub/openclaw-server/scripts/openclaw-coordinatorctl)
 - [bootstrap/install-host.sh](/Users/franciszhan/Documents/GitHub/openclaw-server/bootstrap/install-host.sh)
 - [guest/build-base-image.sh](/Users/franciszhan/Documents/GitHub/openclaw-server/guest/build-base-image.sh)
 

@@ -37,3 +37,11 @@
 - [x] Inspect the existing per-user profile flow and determine whether it can back a reusable activation step.
 - [x] Add an `activate-user` command that persists activation inputs and reapplies them into an existing guest.
 - [x] Document the provision-vs-activate workflow and verify it with automated tests.
+
+## AgentCoordinator DM Test Bring-Up
+
+- [x] Extend coordinator config, parsing, and policy to support DM entrypoints and an explicit self-test mode that targets a configured owner.
+- [x] Add a Slack Socket Mode transport/runtime for the coordinator with approval, review, and draft actions.
+- [x] Document the AgentCoordinator Slack app and prod host test setup.
+- [x] Verify the coordinator locally with unit tests and compile checks.
+- [x] Wire the prod host with coordinator config for the Francis DM test path.

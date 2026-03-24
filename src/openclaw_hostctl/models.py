@@ -23,6 +23,8 @@ class HostConfig:
     smt: bool
     allow_guest_egress: bool
     admin_ssh_keys_path: Path
+    automation_ssh_private_key_path: Path | None
+    automation_ssh_public_key_path: Path | None
     shared_skills_dir: Path | None
     loop_mount_base: Path
 
@@ -44,6 +46,16 @@ class HostConfig:
             smt=bool(data["smt"]),
             allow_guest_egress=bool(data["allow_guest_egress"]),
             admin_ssh_keys_path=Path(data["admin_ssh_keys_path"]),
+            automation_ssh_private_key_path=(
+                Path(data["automation_ssh_private_key_path"])
+                if data.get("automation_ssh_private_key_path")
+                else None
+            ),
+            automation_ssh_public_key_path=(
+                Path(data["automation_ssh_public_key_path"])
+                if data.get("automation_ssh_public_key_path")
+                else None
+            ),
             shared_skills_dir=Path(data["shared_skills_dir"]) if data.get("shared_skills_dir") else None,
             loop_mount_base=Path(data["loop_mount_base"]),
         )
@@ -109,6 +121,14 @@ class HostConfig:
 
     def api_socket_path(self, user_id: str) -> Path:
         return self.runtime_dir(user_id) / "firecracker.socket"
+
+    @property
+    def shared_access_root(self) -> Path:
+        return self.storage_root / "shared-access"
+
+    @property
+    def shared_access_known_hosts_path(self) -> Path:
+        return self.shared_access_root / "known_hosts"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,23 @@
+{
+  "state_root": "/var/lib/openclaw/coordinator",
+  "relay_command": [
+    "ssh",
+    "root@100.95.220.93",
+    "openclaw-hostctl",
+    "shared-access",
+    "execute",
+    "{owner_vm_user_id}"
+  ],
+  "coordinator_slack_user_id": "UCOORDINATOR",
+  "allowed_public_channel_ids": [
+    "C02PT4UQZRN"
+  ],
+  "request_timeout_seconds": 180,
+  "intent_extractor_model": "gpt-5-nano",
+  "intent_extractor_api_key_env": "OPENAI_API_KEY",
+  "intent_extractor_timeout_seconds": 15,
+  "slack_bot_token": "xoxb-REPLACE_ME",
+  "slack_app_token": "xapp-REPLACE_ME",
+  "allow_self_requests_for_testing": false,
+  "dm_test_owner_slack_user_id": null
+}
