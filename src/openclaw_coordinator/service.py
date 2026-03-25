@@ -104,6 +104,7 @@ class CoordinatorService:
         default_owner_slack_user_id = (
             self.config.dm_test_owner_slack_user_id if entrypoint == "dm" else None
         )
+        allow_requester_as_owner = bool(self.config.allow_self_requests_for_testing)
         owner_aliases = self._owner_aliases()
         parsed = self.intent_extractor.extract(
             text=str(event["text"]),
@@ -111,14 +112,19 @@ class CoordinatorService:
             coordinator_slack_user_id=self.config.coordinator_slack_user_id,
             default_owner_slack_user_id=default_owner_slack_user_id,
             owner_aliases=owner_aliases,
+            allow_requester_as_owner=allow_requester_as_owner,
         )
         requester = self.store.get_directory_entry(requester_slack_user_id)
         owner = self.store.get_directory_entry(parsed.owner_slack_user_id)
-        allow_self_requests = (
-            self.config.allow_self_requests_for_testing
-            and entrypoint == "dm"
-            and parsed.owner_slack_user_id == self.config.dm_test_owner_slack_user_id
-        )
+        allow_self_requests = False
+        if self.config.allow_self_requests_for_testing:
+            if entrypoint == "dm":
+                allow_self_requests = (
+                    self.config.dm_test_owner_slack_user_id is None
+                    or parsed.owner_slack_user_id == self.config.dm_test_owner_slack_user_id
+                )
+            else:
+                allow_self_requests = True
         policy_error = evaluate_request_policy(
             requester=requester,
             owner=owner,
@@ -333,6 +339,8 @@ class CoordinatorService:
         requester_slack_user_id: str,
         source_event_id: str,
     ) -> dict[str, object]:
+        if not self.config.enable_draft_requests:
+            raise ValueError("draft requests are disabled for this rollout")
         parent = self.store.load_request(parent_request_id)
         if parent.status != "published" or parent.mode != "read_only":
             raise ValueError("intro drafts require a published read-only request result")
@@ -426,10 +434,9 @@ def format_public_result(record: RequestRecord) -> str:
             lines.append("")
             lines.append(f"Rationale: {rationale}")
         return "\n".join(lines)
-    lines.append(f"Summary: {result.get('decision_summary', '')}")
-    lines.append(f"Why relevant: {result.get('why_relevant', '')}")
-    lines.append(f"Relationship: {result.get('relationship_assessment', '')}")
-    lines.append(f"Next step: {result.get('suggested_next_step', '')}")
+    lines.append(f"Context summary: {result.get('summary_details', '')}")
+    lines.append(f"Business update: {result.get('business_update', '')}")
+    lines.append(f"Best point of contact: {result.get('best_point_of_contact', '')}")
     references = result.get("references", [])
     if references:
         lines.append("References:")
@@ -453,10 +460,9 @@ def format_preview_result(record: RequestRecord) -> str:
             lines.append(f"Rationale: {rationale}")
         return "\n".join(lines)
     lines = [
-        f"Summary: {result.get('decision_summary', '')}",
-        f"Why relevant: {result.get('why_relevant', '')}",
-        f"Relationship: {result.get('relationship_assessment', '')}",
-        f"Next step: {result.get('suggested_next_step', '')}",
+        f"Context summary: {result.get('summary_details', '')}",
+        f"Business update: {result.get('business_update', '')}",
+        f"Best point of contact: {result.get('best_point_of_contact', '')}",
     ]
     references = result.get("references", [])
     if references:

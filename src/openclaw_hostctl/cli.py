@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -76,6 +77,21 @@ def build_parser() -> argparse.ArgumentParser:
     shared_access_execute = shared_access_subparsers.add_parser("execute")
     shared_access_execute.add_argument("user_id")
     shared_access_execute.add_argument("--timeout-seconds", type=int, default=60)
+
+    google_auth = subparsers.add_parser("google-auth")
+    google_auth_subparsers = google_auth.add_subparsers(
+        dest="google_auth_command",
+        required=True,
+    )
+    google_auth_start = google_auth_subparsers.add_parser("start")
+    google_auth_start.add_argument("user_id")
+    google_auth_finish = google_auth_subparsers.add_parser("finish")
+    google_auth_finish.add_argument("user_id")
+    google_auth_finish.add_argument("--callback-url", required=True)
+    google_auth_status = google_auth_subparsers.add_parser("status")
+    google_auth_status.add_argument("user_id")
+    google_auth_broker = google_auth_subparsers.add_parser("broker")
+    google_auth_broker.add_argument("user_id")
 
     return parser
 
@@ -171,6 +187,22 @@ def main() -> int:
             )
             print(json.dumps(result, indent=2))
             return 0
+
+    if args.command == "google-auth":
+        if args.google_auth_command == "start":
+            print(controller.google_auth_start(args.user_id))
+            return 0
+        if args.google_auth_command == "finish":
+            print(json.dumps(controller.google_auth_finish(args.user_id, args.callback_url), indent=2))
+            return 0
+        if args.google_auth_command == "status":
+            print(json.dumps(controller.google_auth_status(args.user_id), indent=2))
+            return 0
+        if args.google_auth_command == "broker":
+            original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "").strip()
+            if not original_command:
+                parser.error("google-auth broker requires SSH_ORIGINAL_COMMAND")
+            return controller.google_auth_broker(args.user_id, original_command)
 
     parser.error("unknown command")
     return 2

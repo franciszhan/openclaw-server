@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from openclaw_coordinator.config import CoordinatorConfig
 from openclaw_coordinator.slack_transport import SlackSocketModeRunner
@@ -106,6 +108,28 @@ class SlackTransportRolloutTests(unittest.TestCase):
         self.assertEqual(self.service.submitted_events, [])
         self.assertEqual(len(self.runner.api.messages), 1)
         self.assertIn("DMs are only used for approvals and review", self.runner.api.messages[0]["text"])
+
+    def test_config_can_read_slack_tokens_from_env(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "BOT_TOKEN_ENV": "xoxb-test",
+                "APP_TOKEN_ENV": "xapp-test",
+            },
+            clear=False,
+        ):
+            config = CoordinatorConfig.from_dict(
+                {
+                    "state_root": "/tmp/coordinator-state",
+                    "relay_command": ["openclaw-hostctl", "shared-access", "execute", "{owner_vm_user_id}"],
+                    "allowed_public_channel_ids": ["CROLLOUT"],
+                    "request_timeout_seconds": 180,
+                    "slack_bot_token_env": "BOT_TOKEN_ENV",
+                    "slack_app_token_env": "APP_TOKEN_ENV",
+                }
+            )
+        self.assertEqual(config.slack_bot_token, "xoxb-test")
+        self.assertEqual(config.slack_app_token, "xapp-test")
 
 
 if __name__ == "__main__":

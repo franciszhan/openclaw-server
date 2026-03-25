@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -20,9 +21,18 @@ class CoordinatorConfig:
     slack_app_token: str | None
     allow_self_requests_for_testing: bool
     dm_test_owner_slack_user_id: str | None
+    enable_draft_requests: bool = False
+    slack_bot_token_env: str | None = None
+    slack_app_token_env: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CoordinatorConfig":
+        slack_bot_token_env = (
+            str(data["slack_bot_token_env"]) if data.get("slack_bot_token_env") else None
+        )
+        slack_app_token_env = (
+            str(data["slack_app_token_env"]) if data.get("slack_app_token_env") else None
+        )
         return cls(
             state_root=Path(data["state_root"]),
             relay_command=[str(value) for value in data["relay_command"]],
@@ -42,14 +52,25 @@ class CoordinatorConfig:
             intent_extractor_timeout_seconds=int(
                 data.get("intent_extractor_timeout_seconds", 15)
             ),
-            slack_bot_token=str(data["slack_bot_token"]) if data.get("slack_bot_token") else None,
-            slack_app_token=str(data["slack_app_token"]) if data.get("slack_app_token") else None,
+            slack_bot_token=(
+                str(data["slack_bot_token"])
+                if data.get("slack_bot_token")
+                else (os.getenv(slack_bot_token_env) if slack_bot_token_env else None)
+            ),
+            slack_app_token=(
+                str(data["slack_app_token"])
+                if data.get("slack_app_token")
+                else (os.getenv(slack_app_token_env) if slack_app_token_env else None)
+            ),
             allow_self_requests_for_testing=bool(data.get("allow_self_requests_for_testing", False)),
             dm_test_owner_slack_user_id=(
                 str(data["dm_test_owner_slack_user_id"])
                 if data.get("dm_test_owner_slack_user_id")
                 else None
             ),
+            enable_draft_requests=bool(data.get("enable_draft_requests", False)),
+            slack_bot_token_env=slack_bot_token_env,
+            slack_app_token_env=slack_app_token_env,
         )
 
     def to_dict(self) -> dict[str, Any]:

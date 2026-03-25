@@ -17,6 +17,17 @@ KillMode=process
 KillSignal=SIGTERM
 NoNewPrivileges=yes
 PrivateTmp=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openclaw
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

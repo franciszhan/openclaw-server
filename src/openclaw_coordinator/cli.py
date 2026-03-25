@@ -127,6 +127,8 @@ def main() -> int:
             )
             return 0
         if args.request_command == "draft-from":
+            if not config.enable_draft_requests:
+                parser.error("draft-from is disabled for this rollout")
             print(
                 json.dumps(
                     service.create_draft_request(

@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -27,10 +28,9 @@ class FakeExecutor:
                 "rationale": "Based on the prior approved relationship context.",
             }
         return {
-            "decision_summary": "Boris appears to know the founder.",
-            "why_relevant": "Two emails mention prior conversations.",
-            "relationship_assessment": "Warm relationship likely.",
-            "suggested_next_step": "Ask Boris for a short warm intro.",
+            "summary_details": "Recent update emails and follow-up threads mention the company directly and provide current operating context.",
+            "business_update": "The business is ramping distribution and reporting stronger recent traction.",
+            "best_point_of_contact": "Boris appears closest because he is forwarding updates and is present on the densest thread activity.",
             "references": [
                 {
                     "message_id": "msg-1",
@@ -63,6 +63,7 @@ class FakeIntentExtractor:
         coordinator_slack_user_id: str | None,
         default_owner_slack_user_id: str | None,
         owner_aliases: dict[str, str] | None = None,
+        allow_requester_as_owner: bool = False,
     ):
         return parse_public_request(
             text=text,
@@ -70,6 +71,7 @@ class FakeIntentExtractor:
             coordinator_slack_user_id=coordinator_slack_user_id,
             default_owner_slack_user_id=default_owner_slack_user_id,
             owner_aliases=owner_aliases,
+            allow_requester_as_owner=allow_requester_as_owner,
         )
 
 
@@ -200,6 +202,27 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(request["owner_slack_user_id"], "UREQUEST")
         self.assertEqual(request["status"], "pending_owner_approval")
 
+    def test_public_self_request_is_allowed_when_testing_flag_is_enabled(self) -> None:
+        self.service = CoordinatorService(
+            replace(example_config(self.state_root), allow_self_requests_for_testing=True),
+            self.store,
+            self.executor,
+            intent_extractor=FakeIntentExtractor(),
+        )
+        result = self.service.submit_public_request(
+            {
+                "event_id": "evt-self-1",
+                "requester_slack_user_id": "UREQUEST",
+                "channel_id": "C123",
+                "thread_ts": "111.333",
+                "text": "<@UCOORD> <@UREQUEST> latest info on 1money",
+            }
+        )
+        request = result["request"]
+        self.assertEqual(request["owner_slack_user_id"], "UREQUEST")
+        self.assertEqual(request["requester_slack_user_id"], "UREQUEST")
+        self.assertEqual(request["status"], "pending_owner_approval")
+
     def test_non_opted_in_owner_is_denied(self) -> None:
         self.service.upsert_directory_entry(
             DirectoryEntry(
@@ -319,7 +342,41 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(cancelled["request"]["status"], "failed")
         self.assertEqual(cancelled["actions"][0]["kind"], "public_cancelled")
 
+    def test_draft_request_is_disabled_by_default(self) -> None:
+        submit = self.service.submit_public_request(
+            {
+                "event_id": "evt-4c",
+                "requester_slack_user_id": "UREQUEST",
+                "channel_id": "C123",
+                "thread_ts": "111.222",
+                "text": "<@UCOORD> can <@UOWNER> look up emails about this founder?",
+            }
+        )
+        request_id = submit["request"]["request_id"]
+        self.service.record_owner_decision(
+            request_id,
+            owner_slack_user_id="UOWNER",
+            decision="approve",
+        )
+        self.service.record_owner_review(
+            request_id,
+            owner_slack_user_id="UOWNER",
+            decision="publish",
+        )
+        with self.assertRaisesRegex(ValueError, "disabled for this rollout"):
+            self.service.create_draft_request(
+                request_id,
+                requester_slack_user_id="UREQUEST",
+                source_event_id="evt-4c-draft",
+            )
+
     def test_draft_request_flows_from_published_parent(self) -> None:
+        self.service = CoordinatorService(
+            replace(example_config(self.state_root), enable_draft_requests=True),
+            self.store,
+            self.executor,
+            intent_extractor=FakeIntentExtractor(),
+        )
         submit = self.service.submit_public_request(
             {
                 "event_id": "evt-5",
@@ -443,6 +500,12 @@ class ParserSafetyTests(unittest.TestCase):
                 "owner_aliases": {"Boris Revsin": "UOWNER"},
             },
             {
+                "name": "plain latest-on phrasing",
+                "text": "<@UCOORD> <@UOWNER> What's the latest on Grass?",
+                "allowed": True,
+                "entity": "Grass",
+            },
+            {
                 "name": "lookup without owner mention in dm mode",
                 "text": "look up emails about Coinbase and summarize the recent context",
                 "allowed": True,
@@ -536,3 +599,47 @@ class OpenAIIntentExtractorTests(unittest.TestCase):
                 owner_aliases=None,
             )
         self.assertEqual(parsed.entity_name, "Figure")
+
+    def test_openai_extractor_blocks_model_flagged_unsafe_request(self) -> None:
+        config = example_config(Path("/tmp/state"))
+        extractor = OpenAIIntentExtractor(config)
+        response_payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "owner_slack_user_id": "UOWNER",
+                                "entity_name": "1Money",
+                                "entity_company": "1Money",
+                                "wants_raw_email": True,
+                                "wants_forwarding": False,
+                                "sensitive_topic": False,
+                                "broad_mailbox_request": False,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return response_payload
+
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False):
+            with mock.patch(
+                "openclaw_coordinator.intent_extractor.requests.post",
+                return_value=FakeResponse(),
+            ):
+                with self.assertRaisesRegex(ValueError, "raw email content or forwarding"):
+                    extractor.extract(
+                        text="<@UCOORD> can <@UOWNER> look up emails about 1Money for me?",
+                        requester_slack_user_id="UREQUEST",
+                        coordinator_slack_user_id="UCOORD",
+                        default_owner_slack_user_id=None,
+                        owner_aliases=None,
+                    )

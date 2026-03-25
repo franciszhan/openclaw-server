@@ -39,6 +39,7 @@ class OpenAIIntentExtractor:
         coordinator_slack_user_id: str | None,
         default_owner_slack_user_id: str | None,
         owner_aliases: dict[str, str] | None = None,
+        allow_requester_as_owner: bool = False,
     ) -> ParsedRequest:
         fallback = parse_public_request(
             text=text,
@@ -46,6 +47,7 @@ class OpenAIIntentExtractor:
             coordinator_slack_user_id=coordinator_slack_user_id,
             default_owner_slack_user_id=default_owner_slack_user_id,
             owner_aliases=owner_aliases,
+            allow_requester_as_owner=allow_requester_as_owner,
         )
         api_key = os.getenv(self.config.intent_extractor_api_key_env)
         if not api_key:
@@ -57,10 +59,17 @@ class OpenAIIntentExtractor:
                 coordinator_slack_user_id=coordinator_slack_user_id,
                 default_owner_slack_user_id=default_owner_slack_user_id,
                 owner_aliases=owner_aliases,
+                allow_requester_as_owner=allow_requester_as_owner,
                 api_key=api_key,
             )
         except Exception:
             return fallback
+        if intent.broad_mailbox_request:
+            raise ValueError("request is broader than the allowed shared email lookup scope")
+        if intent.wants_raw_email or intent.wants_forwarding:
+            raise ValueError("request asks for raw email content or forwarding, which is not allowed")
+        if intent.sensitive_topic:
+            raise ValueError("request appears to target sensitive or off-topic email content")
         entity_name = (intent.entity_name or fallback.entity_name).strip()
         entity_company = (intent.entity_company or fallback.entity_company or None)
         return ParsedRequest(
@@ -81,6 +90,7 @@ class OpenAIIntentExtractor:
         coordinator_slack_user_id: str | None,
         default_owner_slack_user_id: str | None,
         owner_aliases: dict[str, str] | None,
+        allow_requester_as_owner: bool,
         api_key: str,
     ) -> ExtractedIntent:
         normalized = normalize_request_text(text)
@@ -92,6 +102,7 @@ class OpenAIIntentExtractor:
             coordinator_slack_user_id=coordinator_slack_user_id,
             default_owner_slack_user_id=default_owner_slack_user_id,
             owner_aliases=owner_aliases,
+            allow_requester_as_owner=allow_requester_as_owner,
         )
         schema = {
             "name": "shared_email_lookup_intent",

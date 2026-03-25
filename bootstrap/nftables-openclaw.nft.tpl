@@ -17,7 +17,6 @@ table inet filter {
     iifname "tailscale0" tcp dport 22 accept
     ip saddr $admin_nets tcp dport 22 accept
     iifname $bridge_if ip saddr $bridge_net tcp dport 22 accept
-    iifname $bridge_if ip saddr $bridge_net accept
   }
 
   chain forward {

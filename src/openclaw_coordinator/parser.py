@@ -21,8 +21,15 @@ LOOKUP_KEYWORDS = (
     "latest information",
     "latest context",
     "latest update",
+    "latest on",
     "recent context",
     "recent update",
+    "what's the latest",
+    "whats the latest",
+    "what is the latest",
+    "what's new",
+    "whats new",
+    "what is new",
 )
 BLOCKED_SCOPE_PHRASES = (
     "all emails",
@@ -70,6 +77,7 @@ def parse_public_request(
     coordinator_slack_user_id: str | None = None,
     default_owner_slack_user_id: str | None = None,
     owner_aliases: dict[str, str] | None = None,
+    allow_requester_as_owner: bool = False,
 ) -> ParsedRequest:
     owner_slack_user_id = extract_owner_slack_user_id(
         text=text,
@@ -77,6 +85,7 @@ def parse_public_request(
         coordinator_slack_user_id=coordinator_slack_user_id,
         default_owner_slack_user_id=default_owner_slack_user_id,
         owner_aliases=owner_aliases,
+        allow_requester_as_owner=allow_requester_as_owner,
     )
     normalized = normalize_request_text(text)
     validate_lookup_request(normalized.lower())
@@ -102,13 +111,16 @@ def extract_owner_slack_user_id(
     coordinator_slack_user_id: str | None = None,
     default_owner_slack_user_id: str | None = None,
     owner_aliases: dict[str, str] | None = None,
+    allow_requester_as_owner: bool = False,
 ) -> str:
     mentions = MENTION_PATTERN.findall(text)
-    candidate_mentions = [
-        mention
-        for mention in mentions
-        if mention != requester_slack_user_id and mention != coordinator_slack_user_id
-    ]
+    candidate_mentions = []
+    for mention in mentions:
+        if mention == coordinator_slack_user_id:
+            continue
+        if mention == requester_slack_user_id and not allow_requester_as_owner:
+            continue
+        candidate_mentions.append(mention)
     if candidate_mentions:
         return candidate_mentions[-1]
     alias_match = _match_owner_alias(text, owner_aliases or {})
@@ -140,6 +152,8 @@ def _extract_entity_name(text: str) -> str:
         r"(?:look up|lookup|find|search|summari[sz]e)\s+(?:emails?\s+)?(?:related to|about|for)\s+(?P<entity>.+?)(?: and summarize| and tell me| from email| in email|\?|$)",
         r"(?:emails?\s+for|emails?\s+about|emails?\s+related to)\s+(?P<entity>.+?)(?: and summarize| and tell me|\?|$)",
         r"(?:latest|recent)\s+(?:info(?:rmation)?|context|update)\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
+        r"(?:what(?:'s| is)?|whats)\s+(?:the\s+)?latest\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
+        r"(?:what(?:'s| is)?|whats)\s+new\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)

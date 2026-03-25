@@ -582,10 +582,9 @@ def format_preview_text(record: RequestRecord) -> str:
             preview_lines.append(f"*Rationale*: {rationale}")
         return "\n".join(preview_lines)
     preview_lines = [
-        f"*Summary*: {result.get('decision_summary', '')}",
-        f"*Why relevant*: {result.get('why_relevant', '')}",
-        f"*Relationship*: {result.get('relationship_assessment', '')}",
-        f"*Next step*: {result.get('suggested_next_step', '')}",
+        f"*Context summary*: {result.get('summary_details', '')}",
+        f"*Business update*: {result.get('business_update', '')}",
+        f"*Best point of contact*: {result.get('best_point_of_contact', '')}",
     ]
     references = result.get("references", [])
     if isinstance(references, list) and references:

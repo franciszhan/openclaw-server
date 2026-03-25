@@ -13,6 +13,18 @@ Restart=always
 RestartSec=5
 NoNewPrivileges=yes
 PrivateTmp=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openclaw
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+PrivateDevices=yes
 
 [Install]
 WantedBy=multi-user.target

@@ -16,8 +16,9 @@
   "intent_extractor_model": "gpt-5-nano",
   "intent_extractor_api_key_env": "OPENAI_API_KEY",
   "intent_extractor_timeout_seconds": 15,
-  "slack_bot_token": "xoxb-REPLACE_ME",
-  "slack_app_token": "xapp-REPLACE_ME",
+  "slack_bot_token_env": "OPENCLAW_COORDINATOR_SLACK_BOT_TOKEN",
+  "slack_app_token_env": "OPENCLAW_COORDINATOR_SLACK_APP_TOKEN",
   "allow_self_requests_for_testing": false,
-  "dm_test_owner_slack_user_id": null
+  "dm_test_owner_slack_user_id": null,
+  "enable_draft_requests": false
 }

@@ -15,8 +15,6 @@ from openclaw_hostctl.hostctl import (
     render_guest_network,
     render_google_auth_status_wrapper,
     render_google_connect_wrapper,
-    render_google_oauth_exchange_script,
-    render_google_oauth_start_script,
     render_google_finish_wrapper,
 )
 from openclaw_hostctl.models import HostConfig, UserRecord
@@ -49,54 +47,65 @@ def example_config(storage_root: Path) -> HostConfig:
 
 
 class HostControllerTests(unittest.TestCase):
-    def test_google_oauth_scripts_request_gmail_and_calendar_readonly(self) -> None:
-        start_script = render_google_oauth_start_script()
-        exchange_script = render_google_oauth_exchange_script()
-        status_script = render_google_auth_status_wrapper()
-        connect_wrapper = render_google_connect_wrapper()
-        finish_wrapper = render_google_finish_wrapper()
-        self.assertIn("gmail.readonly", start_script)
-        self.assertIn("calendar.readonly", start_script)
-        self.assertIn("google-gmail-token.json", exchange_script)
-        self.assertIn("connect-google", status_script)
-        self.assertIn("gmail-oauth-start.mjs", connect_wrapper)
-        self.assertIn("gmail-oauth-exchange.mjs", finish_wrapper)
+    def test_google_oauth_wrappers_use_host_side_broker(self) -> None:
+        status_script = render_google_auth_status_wrapper(
+            host_ip="172.31.0.1",
+            broker_user="openclaw-google-broker",
+        )
+        connect_wrapper = render_google_connect_wrapper(
+            host_ip="172.31.0.1",
+            broker_user="openclaw-google-broker",
+        )
+        finish_wrapper = render_google_finish_wrapper(
+            host_ip="172.31.0.1",
+            broker_user="openclaw-google-broker",
+        )
+        self.assertIn("openclaw-google-broker@172.31.0.1 start", connect_wrapper)
+        self.assertIn("finish-b64", finish_wrapper)
+        self.assertIn("python3 -c", finish_wrapper)
+        self.assertIn("openclaw-google-broker@172.31.0.1 status", status_script)
+        self.assertNotIn("google-oauth-client.json", connect_wrapper)
 
-    def test_ensure_guest_google_oauth_runtime_copies_shared_client_without_tokens(self) -> None:
+    def test_ensure_guest_google_oauth_runtime_installs_broker_wrappers_without_client_secret(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             mount_dir = Path(tmp_dir) / "mount"
-            client_path = Path(tmp_dir) / "google-oauth-client.json"
-            client_path.write_text(
-                json.dumps(
-                    {
-                        "installed": {
-                            "client_id": "client-id",
-                            "client_secret": "client-secret",
-                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                            "token_uri": "https://oauth2.googleapis.com/token",
-                        }
-                    }
-                )
-                + "\n",
+            (mount_dir / "etc").mkdir(parents=True, exist_ok=True)
+            (mount_dir / "etc/passwd").write_text(
+                "admin:x:1000:1000::/home/admin:/bin/bash\n",
                 encoding="utf-8",
             )
-            state_dir = ensure_guest_google_oauth_runtime(mount_dir, client_path=client_path)
+            (mount_dir / "home/admin").mkdir(parents=True, exist_ok=True)
+            with mock.patch("openclaw_hostctl.hostctl.chown_tree"):
+                state_dir = ensure_guest_google_oauth_runtime(
+                    mount_dir,
+                    user_id="alice",
+                    broker_private_key="PRIVATE KEY\n",
+                    host_ip="172.31.0.1",
+                    known_hosts_line="172.31.0.1 ssh-ed25519 AAAABROKERHOSTKEY",
+                )
             self.assertEqual(state_dir, mount_dir / "home/admin/.openclaw")
-            self.assertTrue(
-                (mount_dir / "home/admin/.openclaw/workspace/scripts/gmail-oauth-start.mjs").exists()
-            )
-            self.assertTrue(
-                (mount_dir / "home/admin/.openclaw/workspace/scripts/gmail-oauth-exchange.mjs").exists()
-            )
             self.assertTrue((mount_dir / "usr/local/bin/connect-google").exists())
             self.assertTrue((mount_dir / "usr/local/bin/finish-google").exists())
             self.assertTrue((mount_dir / "usr/local/bin/google-auth-status").exists())
-            copied_client = json.loads(
-                (mount_dir / "home/admin/.openclaw/workspace/secrets/google-oauth-client.json").read_text(
-                    encoding="utf-8"
-                )
+            self.assertFalse(
+                (mount_dir / "home/admin/.openclaw/workspace/scripts/gmail-oauth-start.mjs").exists()
             )
-            self.assertEqual(copied_client["installed"]["client_id"], "client-id")
+            self.assertFalse(
+                (mount_dir / "home/admin/.openclaw/workspace/scripts/gmail-oauth-exchange.mjs").exists()
+            )
+            self.assertEqual(
+                (mount_dir / "home/admin/.ssh/openclaw-google-broker").read_text(encoding="utf-8"),
+                "PRIVATE KEY\n",
+            )
+            self.assertEqual(
+                (
+                    mount_dir / "home/admin/.ssh/openclaw-google-broker-known_hosts"
+                ).read_text(encoding="utf-8"),
+                "172.31.0.1 ssh-ed25519 AAAABROKERHOSTKEY\n",
+            )
+            self.assertFalse(
+                (mount_dir / "home/admin/.openclaw/workspace/secrets/google-oauth-client.json").exists()
+            )
             self.assertFalse(
                 (mount_dir / "home/admin/.openclaw/workspace/secrets/google-gmail-token.json").exists()
             )
@@ -109,6 +118,9 @@ class HostControllerTests(unittest.TestCase):
             "Unless the requester explicitly asks otherwise, focus the summary on the most recent few relevant emails.",
             script,
         )
+        self.assertIn("Read at most 3 attachments total", script)
+        self.assertIn("raw attachment contents", script)
+        self.assertIn('"low"', script)
 
     def test_allocate_guest_ip_uses_first_free_address(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -347,6 +359,7 @@ class HostControllerTests(unittest.TestCase):
                 shared_access_config["email_intro_lookup"]["command"][2],
                 "{request_path}",
             )
+            self.assertEqual(shared_access_config["capabilities"], ["email_intro_lookup"])
             self.assertEqual(
                 shared_access_config["email_intro_lookup"]["allowedRecipientFilters"],
                 [
@@ -359,7 +372,7 @@ class HostControllerTests(unittest.TestCase):
             )
             self.assertTrue((mount_dir / "usr/local/bin/openclaw-shared-access").exists())
             self.assertTrue((mount_dir / "usr/local/bin/company-email-intro-lookup").exists())
-            self.assertTrue((mount_dir / "usr/local/bin/company-email-intro-draft").exists())
+            self.assertFalse((mount_dir / "usr/local/bin/company-email-intro-draft").exists())
             self.assertTrue((mount_dir / "usr/local/bin/pkg-install").exists())
             self.assertTrue((mount_dir / "usr/local/bin/pkg-search").exists())
             self.assertTrue((mount_dir / "usr/local/sbin/openclaw-apt-install-root").exists())
@@ -437,6 +450,10 @@ class HostControllerTests(unittest.TestCase):
             self.assertEqual(
                 config.user_config_store_path("alice").read_text(encoding="utf-8"),
                 manifest_path.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                oct(config.user_config_store_path("alice").stat().st_mode & 0o777),
+                "0o600",
             )
 
     def test_sync_coordinator_directory_from_manifest_uses_slack_member_id(self) -> None:
