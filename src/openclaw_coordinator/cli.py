@@ -44,10 +44,6 @@ def build_parser() -> argparse.ArgumentParser:
     request_review.add_argument("request_id")
     request_review.add_argument("--owner", required=True)
     request_review.add_argument("--decision", choices=("publish", "cancel"), required=True)
-    request_draft = request_subparsers.add_parser("draft-from")
-    request_draft.add_argument("request_id")
-    request_draft.add_argument("--requester", required=True)
-    request_draft.add_argument("--source-event-id", required=True)
     return parser
 
 
@@ -121,20 +117,6 @@ def main() -> int:
                         args.request_id,
                         owner_slack_user_id=args.owner,
                         decision=args.decision,
-                    ),
-                    indent=2,
-                )
-            )
-            return 0
-        if args.request_command == "draft-from":
-            if not config.enable_draft_requests:
-                parser.error("draft-from is disabled for this rollout")
-            print(
-                json.dumps(
-                    service.create_draft_request(
-                        args.request_id,
-                        requester_slack_user_id=args.requester,
-                        source_event_id=args.source_event_id,
                     ),
                     indent=2,
                 )

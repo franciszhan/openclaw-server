@@ -32,9 +32,6 @@ def build_parser() -> argparse.ArgumentParser:
     activate = subparsers.add_parser("activate-user")
     activate.add_argument("user_id")
     activate.add_argument("--manifest", type=Path)
-    activate.add_argument("--user-config", type=Path)
-    activate.add_argument("--activation-config", type=Path)
-    activate.add_argument("--secrets-env", type=Path)
     activate.add_argument("--force", action="store_true")
     activate.add_argument("--restart", action="store_true")
 
@@ -130,9 +127,6 @@ def main() -> int:
         result = controller.activate_user(
             args.user_id,
             manifest_path=args.manifest,
-            user_config_path=args.user_config,
-            activation_config_path=args.activation_config,
-            secrets_env_path=args.secrets_env,
             force=args.force,
             restart=args.restart,
         )

@@ -10,7 +10,6 @@ import requests
 from .config import CoordinatorConfig
 from .models import ParsedRequest
 from .parser import (
-    extract_owner_slack_user_id,
     normalize_request_text,
     parse_public_request,
     validate_lookup_request,
@@ -37,7 +36,6 @@ class OpenAIIntentExtractor:
         text: str,
         requester_slack_user_id: str,
         coordinator_slack_user_id: str | None,
-        default_owner_slack_user_id: str | None,
         owner_aliases: dict[str, str] | None = None,
         allow_requester_as_owner: bool = False,
     ) -> ParsedRequest:
@@ -45,7 +43,6 @@ class OpenAIIntentExtractor:
             text=text,
             requester_slack_user_id=requester_slack_user_id,
             coordinator_slack_user_id=coordinator_slack_user_id,
-            default_owner_slack_user_id=default_owner_slack_user_id,
             owner_aliases=owner_aliases,
             allow_requester_as_owner=allow_requester_as_owner,
         )
@@ -57,7 +54,6 @@ class OpenAIIntentExtractor:
                 text=text,
                 requester_slack_user_id=requester_slack_user_id,
                 coordinator_slack_user_id=coordinator_slack_user_id,
-                default_owner_slack_user_id=default_owner_slack_user_id,
                 owner_aliases=owner_aliases,
                 allow_requester_as_owner=allow_requester_as_owner,
                 api_key=api_key,
@@ -88,7 +84,6 @@ class OpenAIIntentExtractor:
         text: str,
         requester_slack_user_id: str,
         coordinator_slack_user_id: str | None,
-        default_owner_slack_user_id: str | None,
         owner_aliases: dict[str, str] | None,
         allow_requester_as_owner: bool,
         api_key: str,
@@ -96,21 +91,12 @@ class OpenAIIntentExtractor:
         normalized = normalize_request_text(text)
         lowered = normalized.lower()
         validate_lookup_request(lowered)
-        owner_slack_user_id = extract_owner_slack_user_id(
-            text=normalized,
-            requester_slack_user_id=requester_slack_user_id,
-            coordinator_slack_user_id=coordinator_slack_user_id,
-            default_owner_slack_user_id=default_owner_slack_user_id,
-            owner_aliases=owner_aliases,
-            allow_requester_as_owner=allow_requester_as_owner,
-        )
         schema = {
             "name": "shared_email_lookup_intent",
             "schema": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "owner_slack_user_id": {"type": "string"},
                     "entity_name": {"type": "string"},
                     "entity_company": {"type": ["string", "null"]},
                     "wants_raw_email": {"type": "boolean"},
@@ -119,7 +105,6 @@ class OpenAIIntentExtractor:
                     "broad_mailbox_request": {"type": "boolean"},
                 },
                 "required": [
-                    "owner_slack_user_id",
                     "entity_name",
                     "entity_company",
                     "wants_raw_email",
@@ -133,7 +118,6 @@ class OpenAIIntentExtractor:
         instructions = (
             "Extract intent for a strictly read-only shared email lookup. "
             "Do not expand the user's scope. "
-            "Return the mentioned or default owner slack id exactly as given. "
             "Set broad_mailbox_request true for requests asking for all/every/full inbox style access. "
             "Set wants_raw_email true for raw/verbatim/full-thread asks. "
             "Set wants_forwarding true for forward/send/share style asks. "
@@ -150,7 +134,6 @@ class OpenAIIntentExtractor:
                     "content": json.dumps(
                         {
                             "text": normalized,
-                            "owner_slack_user_id": owner_slack_user_id,
                         }
                     ),
                 },

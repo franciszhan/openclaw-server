@@ -107,12 +107,6 @@ class HostConfig:
     def user_config_store_path(self, user_id: str) -> Path:
         return self.user_dir(user_id) / "user-config.json"
 
-    def activation_config_store_path(self, user_id: str) -> Path:
-        return self.user_dir(user_id) / "activation-config.json"
-
-    def activation_secrets_store_path(self, user_id: str) -> Path:
-        return self.user_dir(user_id) / "activation-secrets.env"
-
     def snapshot_dir(self, user_id: str) -> Path:
         return self.user_dir(user_id) / "snapshots"
 

@@ -21,8 +21,6 @@ class SubprocessRelayExecutor:
         self,
         owner: DirectoryEntry,
         request: RequestRecord,
-        *,
-        parent_request: RequestRecord | None = None,
     ) -> dict[str, object]:
         command = [
             arg.format(
@@ -46,18 +44,12 @@ class SubprocessRelayExecutor:
             "requester_vm_user_id": request.requester_vm_user_id,
             "owner_slack_user_id": request.owner_slack_user_id,
             "owner_vm_user_id": request.owner_vm_user_id,
-            "action_type": (
-                "draft_intro_from_email_context"
-                if request.mode == "draft_intro"
-                else request.action_type
-            ),
+            "action_type": request.action_type,
             "mode": request.mode,
             "entity_name": request.entity_name,
             "entity_company": request.entity_company,
             "purpose": request.purpose,
         }
-        if parent_request and parent_request.result:
-            payload["approved_context"] = parent_request.result
         result = subprocess.run(
             command,
             check=True,
@@ -101,35 +93,22 @@ class CoordinatorService:
             }
         entrypoint = str(event.get("entrypoint", "public_thread"))
         requester_slack_user_id = str(event["requester_slack_user_id"])
-        default_owner_slack_user_id = (
-            self.config.dm_test_owner_slack_user_id if entrypoint == "dm" else None
-        )
         allow_requester_as_owner = bool(self.config.allow_self_requests_for_testing)
         owner_aliases = self._owner_aliases()
         parsed = self.intent_extractor.extract(
             text=str(event["text"]),
             requester_slack_user_id=requester_slack_user_id,
             coordinator_slack_user_id=self.config.coordinator_slack_user_id,
-            default_owner_slack_user_id=default_owner_slack_user_id,
             owner_aliases=owner_aliases,
             allow_requester_as_owner=allow_requester_as_owner,
         )
         requester = self.store.get_directory_entry(requester_slack_user_id)
         owner = self.store.get_directory_entry(parsed.owner_slack_user_id)
-        allow_self_requests = False
-        if self.config.allow_self_requests_for_testing:
-            if entrypoint == "dm":
-                allow_self_requests = (
-                    self.config.dm_test_owner_slack_user_id is None
-                    or parsed.owner_slack_user_id == self.config.dm_test_owner_slack_user_id
-                )
-            else:
-                allow_self_requests = True
         policy_error = evaluate_request_policy(
             requester=requester,
             owner=owner,
             parsed_request=parsed,
-            allow_self_requests=allow_self_requests,
+            allow_self_requests=allow_requester_as_owner,
         )
         if policy_error:
             raise ValueError(policy_error)
@@ -225,12 +204,11 @@ class CoordinatorService:
         owner = self.store.get_directory_entry(record.owner_slack_user_id)
         if owner is None:
             raise ValueError("owner is no longer registered")
-        parent = self.store.load_request(record.parent_request_id) if record.parent_request_id else None
         approved = replace(record, status="executing", owner_decided_at=now, updated_at=now)
         self.store.save_request(approved)
         self._audit("owner_approved", approved)
         try:
-            result = self.executor.execute(owner, approved, parent_request=parent)
+            result = self.executor.execute(owner, approved)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
             failure_text = extract_failure_text(error)
             user_error = classify_execution_failure(failure_text)
@@ -332,68 +310,6 @@ class CoordinatorService:
         ]
         return {"request": published.to_dict(), "actions": [action.to_dict() for action in actions]}
 
-    def create_draft_request(
-        self,
-        parent_request_id: str,
-        *,
-        requester_slack_user_id: str,
-        source_event_id: str,
-    ) -> dict[str, object]:
-        if not self.config.enable_draft_requests:
-            raise ValueError("draft requests are disabled for this rollout")
-        parent = self.store.load_request(parent_request_id)
-        if parent.status != "published" or parent.mode != "read_only":
-            raise ValueError("intro drafts require a published read-only request result")
-        if parent.requester_slack_user_id != requester_slack_user_id:
-            raise ValueError("only the original requester can open a draft flow")
-        owner = self.store.get_directory_entry(parent.owner_slack_user_id)
-        requester = self.store.get_directory_entry(parent.requester_slack_user_id)
-        if owner is None or requester is None:
-            raise ValueError("directory entry missing for draft flow")
-        now = timestamp_now()
-        record = RequestRecord(
-            request_id=uuid.uuid4().hex[:12],
-            source_event_id=source_event_id,
-            requester_slack_user_id=requester.slack_user_id,
-            requester_vm_user_id=requester.vm_user_id,
-            owner_slack_user_id=owner.slack_user_id,
-            owner_vm_user_id=owner.vm_user_id,
-            action_type=parent.action_type,
-            mode="draft_intro",
-            entity_name=parent.entity_name,
-            entity_company=parent.entity_company,
-            purpose=parent.purpose,
-            status="pending_owner_approval",
-            public_channel_id=parent.public_channel_id,
-            public_thread_ts=parent.public_thread_ts,
-            raw_text=parent.raw_text,
-            created_at=now,
-            updated_at=now,
-            parent_request_id=parent.request_id,
-        )
-        self.store.save_request(record)
-        self._audit("draft_request_created", record)
-        actions = [
-            CoordinatorAction(
-                kind="public_ack",
-                request_id=record.request_id,
-                channel_id=record.public_channel_id,
-                thread_ts=record.public_thread_ts,
-                text=f"Draft request `{record.request_id}` queued for owner approval.",
-            ),
-            CoordinatorAction(
-                kind="owner_dm_approval",
-                request_id=record.request_id,
-                slack_user_id=owner.slack_user_id,
-                text=(
-                    "A draft intro was requested from a previously approved lookup.\n\n"
-                    f"Request ID: `{record.request_id}`\n"
-                    f"Reply with `approve {record.request_id}` or `reject {record.request_id}`."
-                ),
-            ),
-        ]
-        return {"request": record.to_dict(), "actions": [action.to_dict() for action in actions]}
-
     def _audit(self, event_type: str, record: RequestRecord) -> None:
         self.store.append_audit_event(
             {
@@ -422,24 +338,16 @@ def format_public_result(record: RequestRecord) -> str:
     result = record.result or {}
     lines = [
         f"Request `{record.request_id}` completed for `{record.entity_name}`.",
+        "",
+        f"*Context summary*\n{result.get('summary_details', '')}",
+        "",
+        f"*Business update*\n{result.get('business_update', '')}",
+        "",
+        f"*Best point of contact*\n{result.get('best_point_of_contact', '')}",
     ]
-    if record.mode == "draft_intro":
-        draft_intro = str(result.get("draft_intro", "")).strip()
-        if draft_intro:
-            lines.append("")
-            lines.append("Proposed intro draft:")
-            lines.append(draft_intro)
-        rationale = str(result.get("rationale", "")).strip()
-        if rationale:
-            lines.append("")
-            lines.append(f"Rationale: {rationale}")
-        return "\n".join(lines)
-    lines.append(f"Context summary: {result.get('summary_details', '')}")
-    lines.append(f"Business update: {result.get('business_update', '')}")
-    lines.append(f"Best point of contact: {result.get('best_point_of_contact', '')}")
     references = result.get("references", [])
     if references:
-        lines.append("References:")
+        lines.extend(["", "*References*"])
         for reference in references:
             if not isinstance(reference, dict):
                 continue
@@ -452,21 +360,16 @@ def format_public_result(record: RequestRecord) -> str:
 
 def format_preview_result(record: RequestRecord) -> str:
     result = record.result or {}
-    if record.mode == "draft_intro":
-        draft_intro = str(result.get("draft_intro", "")).strip()
-        rationale = str(result.get("rationale", "")).strip()
-        lines = [f"Draft: {draft_intro or '(empty)'}"]
-        if rationale:
-            lines.append(f"Rationale: {rationale}")
-        return "\n".join(lines)
     lines = [
-        f"Context summary: {result.get('summary_details', '')}",
-        f"Business update: {result.get('business_update', '')}",
-        f"Best point of contact: {result.get('best_point_of_contact', '')}",
+        f"*Context summary*\n{result.get('summary_details', '')}",
+        "",
+        f"*Business update*\n{result.get('business_update', '')}",
+        "",
+        f"*Best point of contact*\n{result.get('best_point_of_contact', '')}",
     ]
     references = result.get("references", [])
     if references:
-        lines.append("References:")
+        lines.extend(["", "*References*"])
         for reference in references[:3]:
             if not isinstance(reference, dict):
                 continue

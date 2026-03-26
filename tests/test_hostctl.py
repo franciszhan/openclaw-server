@@ -11,9 +11,11 @@ from openclaw_hostctl.config import save_user_record
 from openclaw_hostctl.hostctl import (
     HostController,
     ensure_guest_google_oauth_runtime,
+    ensure_company_agents_addendum,
     render_email_intro_lookup_script,
     render_guest_network,
     render_google_auth_status_wrapper,
+    render_company_agents_addendum,
     render_google_connect_wrapper,
     render_google_finish_wrapper,
 )
@@ -121,6 +123,34 @@ class HostControllerTests(unittest.TestCase):
         self.assertIn("Read at most 3 attachments total", script)
         self.assertIn("raw attachment contents", script)
         self.assertIn('"low"', script)
+
+    def test_company_agents_addendum_appends_without_replacing_existing_agents_md(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mount_dir = Path(tmp_dir) / "mount"
+            agents_path = mount_dir / "home/admin/.openclaw/workspace/AGENTS.md"
+            agents_path.parent.mkdir(parents=True, exist_ok=True)
+            agents_path.write_text("# AGENTS.md\n\nOriginal instructions.\n", encoding="utf-8")
+            ensure_company_agents_addendum(mount_dir)
+            content = agents_path.read_text(encoding="utf-8")
+            self.assertIn("Original instructions.", content)
+            self.assertIn("## Company Addendum", content)
+            self.assertIn("/opt/openclaw/skills/company", content)
+            self.assertIn("connect-google", content)
+
+    def test_company_agents_addendum_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mount_dir = Path(tmp_dir) / "mount"
+            agents_path = mount_dir / "home/admin/.openclaw/workspace/AGENTS.md"
+            agents_path.parent.mkdir(parents=True, exist_ok=True)
+            agents_path.write_text("# AGENTS.md\n", encoding="utf-8")
+            ensure_company_agents_addendum(mount_dir)
+            ensure_company_agents_addendum(mount_dir)
+            content = agents_path.read_text(encoding="utf-8")
+            self.assertEqual(content.count("## Company Addendum"), 1)
+            self.assertEqual(
+                content.count(render_company_agents_addendum().splitlines()[0]),
+                1,
+            )
 
     def test_allocate_guest_ip_uses_first_free_address(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -270,9 +300,6 @@ class HostControllerTests(unittest.TestCase):
                 result = controller.activate_user(
                     "alice",
                     manifest_path=None,
-                    user_config_path=None,
-                    activation_config_path=None,
-                    secrets_env_path=None,
                     force=False,
                     restart=False,
                 )
@@ -440,9 +467,6 @@ class HostControllerTests(unittest.TestCase):
                 controller.activate_user(
                     "alice",
                     manifest_path=manifest_path,
-                    user_config_path=None,
-                    activation_config_path=None,
-                    secrets_env_path=None,
                     force=False,
                     restart=False,
                 )

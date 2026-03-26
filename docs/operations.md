@@ -257,7 +257,7 @@ Activation does all of this:
 - enables linger for `admin`
 - locks `/home/admin/.openclaw` and `/home/admin/.openclaw/credentials` down to `0700`
 - installs `/usr/local/bin/openclaw-shared-access` for typed coordinator-only shared access
-- installs `/usr/local/bin/company-email-intro-lookup` and `/usr/local/bin/company-email-intro-draft` as the default owner-side shared-access commands
+- installs `/usr/local/bin/company-email-intro-lookup` as the default owner-side shared-access command
 - installs `/usr/local/bin/pkg-search` and `/usr/local/bin/pkg-install` for constrained guest package management without granting a general root shell
 - optionally starts the VM again with `--restart`
 
@@ -306,8 +306,7 @@ Example config:
   "request_timeout_seconds": 60,
   "slack_bot_token": "xoxb-REPLACE_ME",
   "slack_app_token": "xapp-REPLACE_ME",
-  "allow_self_requests_for_testing": false,
-  "dm_test_owner_slack_user_id": null
+  "allow_self_requests_for_testing": false
 }
 ```
 
@@ -317,13 +316,6 @@ The host bootstrap installs:
 - `openclaw-coordinator.service`
 
 The Slack runtime needs `websocket-client`. `install-host.sh` installs it automatically on Debian hosts.
-
-For a DM-only one-account test against a single owner VM, set:
-
-- `allow_self_requests_for_testing: true`
-- `dm_test_owner_slack_user_id` to that owner's Slack user ID
-
-Then DM the coordinator bot directly. The DM request will be routed to that owner entry even if the message does not mention another user.
 
 Minimal Slack app requirements for coordinator testing:
 

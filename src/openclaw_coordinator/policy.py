@@ -18,11 +18,7 @@ def evaluate_request_policy(
         return "cross-agent requests must target another opted-in owner"
     if not owner.opt_in:
         return "target owner has not opted into shared access"
-    required_capability = (
-        "draft_intro_from_email_context"
-        if parsed_request.mode == "draft_intro"
-        else "email_intro_lookup"
-    )
+    required_capability = "email_intro_lookup"
     if required_capability not in owner.shared_capabilities:
         return f"target owner does not allow {required_capability}"
     return None

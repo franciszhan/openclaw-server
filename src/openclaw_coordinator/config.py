@@ -20,8 +20,6 @@ class CoordinatorConfig:
     slack_bot_token: str | None
     slack_app_token: str | None
     allow_self_requests_for_testing: bool
-    dm_test_owner_slack_user_id: str | None
-    enable_draft_requests: bool = False
     slack_bot_token_env: str | None = None
     slack_app_token_env: str | None = None
 
@@ -63,12 +61,6 @@ class CoordinatorConfig:
                 else (os.getenv(slack_app_token_env) if slack_app_token_env else None)
             ),
             allow_self_requests_for_testing=bool(data.get("allow_self_requests_for_testing", False)),
-            dm_test_owner_slack_user_id=(
-                str(data["dm_test_owner_slack_user_id"])
-                if data.get("dm_test_owner_slack_user_id")
-                else None
-            ),
-            enable_draft_requests=bool(data.get("enable_draft_requests", False)),
             slack_bot_token_env=slack_bot_token_env,
             slack_app_token_env=slack_app_token_env,
         )

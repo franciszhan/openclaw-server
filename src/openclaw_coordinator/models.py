@@ -15,7 +15,7 @@ REQUEST_STATUSES = {
     "expired",
 }
 
-REQUEST_MODES = {"read_only", "draft_intro"}
+REQUEST_MODES = {"read_only"}
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,6 @@ class RequestRecord:
     raw_text: str
     created_at: str
     updated_at: str
-    parent_request_id: str | None = None
     owner_decided_at: str | None = None
     owner_reviewed_at: str | None = None
     published_at: str | None = None
@@ -119,7 +118,6 @@ class RequestRecord:
             raw_text=str(data["raw_text"]),
             created_at=str(data["created_at"]),
             updated_at=str(data["updated_at"]),
-            parent_request_id=str(data["parent_request_id"]) if data.get("parent_request_id") else None,
             owner_decided_at=str(data["owner_decided_at"]) if data.get("owner_decided_at") else None,
             owner_reviewed_at=str(data["owner_reviewed_at"]) if data.get("owner_reviewed_at") else None,
             published_at=str(data["published_at"]) if data.get("published_at") else None,

@@ -110,7 +110,7 @@ sudo openclaw-hostctl provision alice \
 
 The host stores the full manifest under the VM directory, but the guest-facing `/etc/openclaw/config.json` only gets the non-OpenClaw metadata fields. The `openclaw` section is reserved for the activation step.
 The `shared_access` section is also reserved for activation and the coordinator flow.
-If you omit the `command` arrays, activation now defaults them to the built-in `/usr/local/bin/company-email-intro-lookup` and `/usr/local/bin/company-email-intro-draft` wrappers, which call `openclaw agent --local` inside the guest.
+If you omit the `command` array, activation now defaults it to the built-in `/usr/local/bin/company-email-intro-lookup` wrapper, which calls `openclaw agent --local` inside the guest.
 
 ## Activation Inputs
 

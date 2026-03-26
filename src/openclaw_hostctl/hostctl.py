@@ -36,6 +36,7 @@ DEFAULT_GOOGLE_OAUTH_BROKER_ROOT = Path("/var/lib/openclaw/google-oauth-broker")
 DEFAULT_HOST_SSH_ED25519_PUBLIC_KEY_PATH = Path("/etc/ssh/ssh_host_ed25519_key.pub")
 DEFAULT_GOOGLE_OAUTH_BROKER_SUDOERS_PATH = Path("/etc/sudoers.d/openclaw-google-oauth-broker")
 GOOGLE_OAUTH_BROKER_USER = "openclaw-google-broker"
+COMPANY_AGENTS_ADDENDUM_MARKER = "<!-- OPENCLAW COMPANY ADDENDUM -->"
 
 
 class HostController:
@@ -142,9 +143,6 @@ class HostController:
         user_id: str,
         *,
         manifest_path: Path | None,
-        user_config_path: Path | None,
-        activation_config_path: Path | None,
-        secrets_env_path: Path | None,
         force: bool,
         restart: bool,
     ) -> dict[str, object]:
@@ -160,31 +158,13 @@ class HostController:
             manifest_path,
             self.config.user_config_store_path(user_id),
         )
-        stored_activation_config = self._resolve_stored_input(
-            activation_config_path,
-            self.config.activation_config_store_path(user_id),
-        )
-        stored_secrets_env = self._resolve_stored_input(
-            secrets_env_path,
-            self.config.activation_secrets_store_path(user_id),
-        )
+        if stored_manifest is None:
+            raise ValueError("activate-user requires a manifest or an existing stored manifest")
 
         with mounted_image(Path(user.rootfs_path), self.config.loop_mount_base, user_id) as mount_dir:
-            if stored_manifest:
-                manifest = load_json_file(stored_manifest)
-                self._apply_manifest_files(mount_dir, manifest)
-                self._sync_coordinator_directory_from_manifest(user, manifest)
-            else:
-                stored_user_config = self._resolve_stored_input(
-                    user_config_path,
-                    self.config.user_config_store_path(user_id),
-                )
-                self._apply_activation_files(
-                    mount_dir,
-                    stored_user_config,
-                    stored_activation_config,
-                    stored_secrets_env,
-                )
+            manifest = load_json_file(stored_manifest)
+            self._apply_manifest_files(mount_dir, manifest)
+            self._sync_coordinator_directory_from_manifest(user, manifest)
             self._ensure_guest_google_oauth_broker(user.user_id, mount_dir)
 
         restarted = False
@@ -194,11 +174,7 @@ class HostController:
 
         return {
             "user_id": user_id,
-            "applied_manifest": str(stored_manifest) if stored_manifest else None,
-            "applied_activation_config": (
-                str(stored_activation_config) if stored_activation_config else None
-            ),
-            "applied_secrets_env": str(stored_secrets_env) if stored_secrets_env else None,
+            "applied_manifest": str(stored_manifest),
             "restarted": restarted,
         }
 
@@ -357,32 +333,8 @@ class HostController:
             destination = mount_dir / "opt/openclaw/skills/company"
             destination.parent.mkdir(parents=True, exist_ok=True)
             copy_tree(self.config.shared_skills_dir, destination)
+        ensure_company_agents_addendum(mount_dir)
         self._ensure_guest_admin_ssh(mount_dir)
-
-    def _apply_activation_files(
-        self,
-        mount_dir: Path,
-        user_config_path: Path | None,
-        activation_config_path: Path | None,
-        secrets_env_path: Path | None,
-    ) -> None:
-        config_dir = mount_dir / "etc/openclaw"
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        if user_config_path:
-            destination = config_dir / "config.json"
-            shutil.copyfile(user_config_path, destination)
-            os.chmod(destination, 0o640)
-
-        if activation_config_path:
-            destination = config_dir / "activation.json"
-            shutil.copyfile(activation_config_path, destination)
-            os.chmod(destination, 0o640)
-
-        if secrets_env_path:
-            destination = config_dir / "secrets.env"
-            shutil.copyfile(secrets_env_path, destination)
-            os.chmod(destination, 0o600)
 
     def _apply_manifest_files(self, mount_dir: Path, manifest: dict[str, object]) -> None:
         guest_config = build_guest_user_config(manifest)
@@ -463,6 +415,7 @@ class HostController:
             destination = mount_dir / "opt/openclaw/skills/company"
             destination.parent.mkdir(parents=True, exist_ok=True)
             copy_tree(self.config.shared_skills_dir, destination)
+        ensure_company_agents_addendum(mount_dir)
         ensure_guest_package_runtime(mount_dir)
         ensure_shared_access_guest_runtime(mount_dir, manifest)
         self._ensure_guest_admin_ssh(mount_dir)
@@ -475,7 +428,6 @@ class HostController:
             systemd_user_dir / "openclaw-gateway.service",
             mount_dir / "usr/local/bin/openclaw-shared-access",
             mount_dir / "usr/local/bin/company-email-intro-lookup",
-            mount_dir / "usr/local/bin/company-email-intro-draft",
         ):
             if path.exists():
                 os.chown(path, uid, gid)
@@ -1096,7 +1048,9 @@ def extract_shared_access_config(manifest: dict[str, object]) -> dict[str, objec
         config.setdefault("slack_user_id", slack_user_id)
     capabilities = config.setdefault("capabilities", ["email_intro_lookup"])
     if isinstance(capabilities, list):
-        config["capabilities"] = [str(value) for value in capabilities]
+        config["capabilities"] = [
+            str(value) for value in capabilities if str(value) == "email_intro_lookup"
+        ] or ["email_intro_lookup"]
     lookup = config.setdefault("email_intro_lookup", {})
     if isinstance(lookup, dict):
         lookup.setdefault(
@@ -1119,21 +1073,7 @@ def extract_shared_access_config(manifest: dict[str, object]) -> dict[str, objec
                 "{response_path}",
             ],
         )
-    draft = config.get("draft_intro_from_email_context")
-    if "draft_intro_from_email_context" in config.get("capabilities", []) and not isinstance(draft, dict):
-        draft = {}
-        config["draft_intro_from_email_context"] = draft
-    if isinstance(draft, dict):
-        draft.setdefault(
-            "command",
-            [
-                "/usr/local/bin/company-email-intro-draft",
-                "--request",
-                "{request_path}",
-                "--response",
-                "{response_path}",
-            ],
-        )
+    config.pop("draft_intro_from_email_context", None)
     return config
 
 
@@ -1328,10 +1268,6 @@ def ensure_shared_access_guest_runtime(mount_dir: Path, manifest: dict[str, obje
     lookup_path = mount_dir / "usr/local/bin/company-email-intro-lookup"
     lookup_path.write_text(render_email_intro_lookup_script(), encoding="utf-8")
     os.chmod(lookup_path, 0o755)
-    if "draft_intro_from_email_context" in shared_access_config.get("capabilities", []):
-        draft_path = mount_dir / "usr/local/bin/company-email-intro-draft"
-        draft_path.write_text(render_email_intro_draft_script(), encoding="utf-8")
-        os.chmod(draft_path, 0o755)
 
 
 def ensure_guest_package_runtime(mount_dir: Path) -> None:
@@ -1421,6 +1357,34 @@ def ensure_guest_google_oauth_runtime(
     uid, gid = lookup_guest_user(mount_dir, "admin")
     chown_tree(ssh_dir, uid, gid)
     return state_dir
+
+
+def ensure_company_agents_addendum(mount_dir: Path) -> None:
+    agents_path = mount_dir / "home/admin/.openclaw/workspace/AGENTS.md"
+    if not agents_path.exists():
+        return
+    existing = agents_path.read_text(encoding="utf-8")
+    if COMPANY_AGENTS_ADDENDUM_MARKER in existing:
+        return
+    addendum = render_company_agents_addendum()
+    separator = "\n\n" if existing and not existing.endswith("\n\n") else ""
+    agents_path.write_text(existing + separator + addendum, encoding="utf-8")
+
+
+def render_company_agents_addendum() -> str:
+    return f"""{COMPANY_AGENTS_ADDENDUM_MARKER}
+
+## Company Addendum
+
+- Company skills are installed at `/opt/openclaw/skills/company`.
+- Before saying a workflow or helper is unavailable, check the company skills relevant to the request.
+- For Google Workspace auth, use the existing helper commands on the VM:
+  - `google-auth-status`
+  - `connect-google`
+  - `finish-google "<callback_url>"`
+- If the user asks to connect Gmail, Calendar, email, inbox, or schedule access, prefer these helper commands over abstract setup advice.
+- If the user explicitly asks you to run one of these commands, execute it and return the relevant output.
+"""
 
 
 def render_guest_package_root_helper() -> str:
@@ -1526,7 +1490,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const CONFIG_PATH = "/home/admin/.openclaw/shared-access.json";
-const ALLOWED_ACTIONS = new Set(["email_intro_lookup", "draft_intro_from_email_context"]);
+const ALLOWED_ACTIONS = new Set(["email_intro_lookup"]);
 const RAW_FIELD_NAMES = new Set(["body", "raw_body", "content", "snippet", "excerpt", "attachments"]);
 
 function fail(message, code = 1) {
@@ -1578,21 +1542,6 @@ function sanitizeLookupResult(raw) {
   const references = Array.isArray(raw.references) ? raw.references : [];
   output.references = references.map(sanitizeReference);
   return output;
-}
-
-function sanitizeDraftResult(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("draft result must be a JSON object");
-  }
-  for (const key of Object.keys(raw)) {
-    if (RAW_FIELD_NAMES.has(key)) {
-      throw new Error(`disallowed raw content field in draft result: ${key}`);
-    }
-  }
-  return {
-    draft_intro: typeof raw.draft_intro === "string" ? raw.draft_intro : "",
-    rationale: typeof raw.rationale === "string" ? raw.rationale : "",
-  };
 }
 
 function applyTemplate(args, requestPath, responsePath) {
@@ -1651,9 +1600,7 @@ function main() {
     fail("shared access capability is misconfigured");
   }
   const rawResult = runConfiguredCommand(actionConfig.command, request);
-  const sanitized = actionType === "draft_intro_from_email_context"
-    ? sanitizeDraftResult(rawResult)
-    : sanitizeLookupResult(rawResult);
+  const sanitized = sanitizeLookupResult(rawResult);
   process.stdout.write(JSON.stringify(sanitized, null, 2) + "\n");
 }
 
@@ -1813,107 +1760,6 @@ function main() {
       `lookup returned no references within allowed mailbox scope (${allowedFilters.join(", ")})`
     );
   }
-  fs.writeFileSync(args["--response"], JSON.stringify(parsed, null, 2) + "\n", "utf8");
-}
-
-try {
-  main();
-} catch (error) {
-  fail(error instanceof Error ? error.message : String(error));
-}
-"""
-
-
-def render_email_intro_draft_script() -> str:
-    return r"""#!/usr/bin/env node
-const fs = require("fs");
-const { spawnSync } = require("child_process");
-
-function fail(message) {
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
-}
-
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 2; i < argv.length; i += 2) {
-    args[argv[i]] = argv[i + 1];
-  }
-  if (!args["--request"] || !args["--response"]) {
-    fail("usage: company-email-intro-draft --request <path> --response <path>");
-  }
-  return args;
-}
-
-function loadEnv(filePath) {
-  if (!fs.existsSync(filePath)) {
-    return {};
-  }
-  const result = {};
-  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
-    if (!line || line.trim().startsWith("#")) {
-      continue;
-    }
-    const index = line.indexOf("=");
-    if (index === -1) {
-      continue;
-    }
-    result[line.slice(0, index)] = line.slice(index + 1);
-  }
-  return result;
-}
-
-function extractJsonObject(text) {
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if (first === -1 || last === -1 || last <= first) {
-    throw new Error("OpenClaw did not return a JSON object");
-  }
-  return JSON.parse(text.slice(first, last + 1));
-}
-
-function main() {
-  const args = parseArgs(process.argv);
-  const request = JSON.parse(fs.readFileSync(args["--request"], "utf8"));
-  const approvedContext = JSON.stringify(request.approved_context || {}, null, 2);
-  const prompt = [
-    "You are a scoped intro drafting tool.",
-    "Use only the approved structured context below.",
-    "Do not access email tools or any other external data.",
-    "Return strict JSON with exactly these keys: draft_intro, rationale.",
-    `Approved context:\n${approvedContext}`,
-    `Requester slack id: ${request.requester_slack_user_id || ""}`,
-    `Purpose: ${request.purpose || ""}`,
-    `Entity name: ${request.entity_name || ""}`,
-    `Entity company: ${request.entity_company || ""}`,
-  ].join("\n\n");
-  const env = {
-    ...process.env,
-    ...loadEnv("/home/admin/.openclaw/.env"),
-    HOME: "/home/admin",
-  };
-    const result = spawnSync(
-      "openclaw",
-      [
-        "agent",
-        "--agent",
-        "main",
-        "--local",
-        "--message",
-        prompt,
-        "--thinking",
-        "medium",
-    ],
-    {
-      encoding: "utf8",
-      env,
-      timeout: 600000,
-    }
-  );
-  if (result.status !== 0) {
-    fail(result.stderr || result.stdout || "openclaw agent failed");
-  }
-  const parsed = extractJsonObject(result.stdout);
   fs.writeFileSync(args["--response"], JSON.stringify(parsed, null, 2) + "\n", "utf8");
 }
 

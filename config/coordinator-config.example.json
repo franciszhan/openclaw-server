@@ -18,7 +18,5 @@
   "intent_extractor_timeout_seconds": 15,
   "slack_bot_token_env": "OPENCLAW_COORDINATOR_SLACK_BOT_TOKEN",
   "slack_app_token_env": "OPENCLAW_COORDINATOR_SLACK_APP_TOKEN",
-  "allow_self_requests_for_testing": false,
-  "dm_test_owner_slack_user_id": null,
-  "enable_draft_requests": false
+  "allow_self_requests_for_testing": false
 }

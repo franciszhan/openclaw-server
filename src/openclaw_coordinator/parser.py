@@ -75,7 +75,6 @@ def parse_public_request(
     text: str,
     requester_slack_user_id: str,
     coordinator_slack_user_id: str | None = None,
-    default_owner_slack_user_id: str | None = None,
     owner_aliases: dict[str, str] | None = None,
     allow_requester_as_owner: bool = False,
 ) -> ParsedRequest:
@@ -83,7 +82,6 @@ def parse_public_request(
         text=text,
         requester_slack_user_id=requester_slack_user_id,
         coordinator_slack_user_id=coordinator_slack_user_id,
-        default_owner_slack_user_id=default_owner_slack_user_id,
         owner_aliases=owner_aliases,
         allow_requester_as_owner=allow_requester_as_owner,
     )
@@ -109,7 +107,6 @@ def extract_owner_slack_user_id(
     text: str,
     requester_slack_user_id: str,
     coordinator_slack_user_id: str | None = None,
-    default_owner_slack_user_id: str | None = None,
     owner_aliases: dict[str, str] | None = None,
     allow_requester_as_owner: bool = False,
 ) -> str:
@@ -126,8 +123,6 @@ def extract_owner_slack_user_id(
     alias_match = _match_owner_alias(text, owner_aliases or {})
     if alias_match:
         return alias_match
-    if default_owner_slack_user_id:
-        return default_owner_slack_user_id
     raise ValueError("request must mention a target owner")
 
 

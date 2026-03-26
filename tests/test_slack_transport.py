@@ -47,7 +47,6 @@ def example_config() -> CoordinatorConfig:
         slack_bot_token="xoxb-test",
         slack_app_token="xapp-test",
         allow_self_requests_for_testing=False,
-        dm_test_owner_slack_user_id=None,
     )
 
 

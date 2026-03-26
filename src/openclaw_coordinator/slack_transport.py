@@ -236,25 +236,6 @@ class SlackSocketModeRunner:
         message_ts = str(container.get("message_ts") or "")
         user_id = str(user.get("id") or "")
 
-        if action_id == "owner_decision":
-            LOGGER.info("received owner decision action from %s", user_id)
-            self._ack_interactive_decision(
-                channel_id=channel_id,
-                message_ts=message_ts,
-                request_id=str(action_value.get("request_id") or ""),
-                text="Approval received. Running the scoped lookup now.",
-            )
-            result = self._run_coordinator_action(
-                lambda: self.service.record_owner_decision(
-                    str(action_value["request_id"]),
-                    owner_slack_user_id=user_id,
-                    decision=str(action_value["decision"]),
-                ),
-                channel_id=channel_id,
-                thread_ts=thread_ts or None,
-            )
-            self._refresh_interactive_message(channel_id, message_ts, action_value, result)
-            return
         if action_id in {"owner_decision_approve", "owner_decision_reject"}:
             decision = "approve" if action_id.endswith("approve") else "reject"
             LOGGER.info("received owner decision action %s from %s", decision, user_id)
@@ -274,25 +255,6 @@ class SlackSocketModeRunner:
                     str(action_value["request_id"]),
                     owner_slack_user_id=user_id,
                     decision=decision,
-                ),
-                channel_id=channel_id,
-                thread_ts=thread_ts or None,
-            )
-            self._refresh_interactive_message(channel_id, message_ts, action_value, result)
-            return
-        if action_id == "review_decision":
-            LOGGER.info("received owner review action from %s", user_id)
-            self._ack_interactive_decision(
-                channel_id=channel_id,
-                message_ts=message_ts,
-                request_id=str(action_value.get("request_id") or ""),
-                text="Review decision received. Updating request state.",
-            )
-            result = self._run_coordinator_action(
-                lambda: self.service.record_owner_review(
-                    str(action_value["request_id"]),
-                    owner_slack_user_id=user_id,
-                    decision=str(action_value["decision"]),
                 ),
                 channel_id=channel_id,
                 thread_ts=thread_ts or None,
@@ -574,17 +536,12 @@ class SlackSocketModeRunner:
 
 def format_preview_text(record: RequestRecord) -> str:
     result = record.result or {}
-    if record.mode == "draft_intro":
-        draft_intro = str(result.get("draft_intro", "")).strip()
-        rationale = str(result.get("rationale", "")).strip()
-        preview_lines = [f"*Draft*: {draft_intro or '(empty)'}"]
-        if rationale:
-            preview_lines.append(f"*Rationale*: {rationale}")
-        return "\n".join(preview_lines)
     preview_lines = [
-        f"*Context summary*: {result.get('summary_details', '')}",
-        f"*Business update*: {result.get('business_update', '')}",
-        f"*Best point of contact*: {result.get('best_point_of_contact', '')}",
+        f"*Context summary*\n{result.get('summary_details', '')}",
+        "",
+        f"*Business update*\n{result.get('business_update', '')}",
+        "",
+        f"*Best point of contact*\n{result.get('best_point_of_contact', '')}",
     ]
     references = result.get("references", [])
     if isinstance(references, list) and references:
@@ -597,7 +554,7 @@ def format_preview_text(record: RequestRecord) -> str:
             date = reference.get("date") or "unknown date"
             reference_lines.append(f"• {subject} ({sender}, {date})")
         if reference_lines:
-            preview_lines.append("*References:*\n" + "\n".join(reference_lines))
+            preview_lines.extend(["", "*References*", "\n".join(reference_lines)])
     return "\n".join(preview_lines)
 
 
