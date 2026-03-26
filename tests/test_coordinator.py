@@ -427,10 +427,6 @@ class OpenAIIntentExtractorTests(unittest.TestCase):
                             {
                                 "entity_name": "Rava Money",
                                 "entity_company": "Rava Money",
-                                "wants_raw_email": False,
-                                "wants_forwarding": False,
-                                "sensitive_topic": False,
-                                "broad_mailbox_request": False,
                             }
                         )
                     }
@@ -472,7 +468,7 @@ class OpenAIIntentExtractorTests(unittest.TestCase):
             )
         self.assertEqual(parsed.entity_name, "Figure")
 
-    def test_openai_extractor_blocks_model_flagged_unsafe_request(self) -> None:
+    def test_openai_extractor_ignores_model_flag_fields_and_uses_regex_validation(self) -> None:
         config = example_config(Path("/tmp/state"))
         extractor = OpenAIIntentExtractor(config)
         response_payload = {
@@ -484,9 +480,9 @@ class OpenAIIntentExtractorTests(unittest.TestCase):
                                 "entity_name": "1Money",
                                 "entity_company": "1Money",
                                 "wants_raw_email": True,
-                                "wants_forwarding": False,
-                                "sensitive_topic": False,
-                                "broad_mailbox_request": False,
+                                "wants_forwarding": True,
+                                "sensitive_topic": True,
+                                "broad_mailbox_request": True,
                             }
                         )
                     }
@@ -506,13 +502,14 @@ class OpenAIIntentExtractorTests(unittest.TestCase):
                 "openclaw_coordinator.intent_extractor.requests.post",
                 return_value=FakeResponse(),
             ):
-                with self.assertRaisesRegex(ValueError, "raw email content or forwarding"):
-                    extractor.extract(
-                        text="<@UCOORD> can <@UOWNER> look up emails about 1Money for me?",
-                        requester_slack_user_id="UREQUEST",
-                        coordinator_slack_user_id="UCOORD",
-                        owner_aliases=None,
-                    )
+                parsed = extractor.extract(
+                    text="<@UCOORD> can <@UOWNER> look up emails about 1Money for me?",
+                    requester_slack_user_id="UREQUEST",
+                    coordinator_slack_user_id="UCOORD",
+                    owner_aliases=None,
+                )
+        self.assertEqual(parsed.entity_name, "1Money")
+        self.assertEqual(parsed.entity_company, "1Money")
 
 
 if __name__ == "__main__":

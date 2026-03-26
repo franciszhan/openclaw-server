@@ -20,10 +20,6 @@ from .parser import (
 class ExtractedIntent:
     entity_name: str | None
     entity_company: str | None
-    wants_raw_email: bool
-    wants_forwarding: bool
-    sensitive_topic: bool
-    broad_mailbox_request: bool
 
 
 class OpenAIIntentExtractor:
@@ -60,12 +56,6 @@ class OpenAIIntentExtractor:
             )
         except Exception:
             return fallback
-        if intent.broad_mailbox_request:
-            raise ValueError("request is broader than the allowed shared email lookup scope")
-        if intent.wants_raw_email or intent.wants_forwarding:
-            raise ValueError("request asks for raw email content or forwarding, which is not allowed")
-        if intent.sensitive_topic:
-            raise ValueError("request appears to target sensitive or off-topic email content")
         entity_name = (intent.entity_name or fallback.entity_name).strip()
         entity_company = (intent.entity_company or fallback.entity_company or None)
         return ParsedRequest(
@@ -99,29 +89,16 @@ class OpenAIIntentExtractor:
                 "properties": {
                     "entity_name": {"type": "string"},
                     "entity_company": {"type": ["string", "null"]},
-                    "wants_raw_email": {"type": "boolean"},
-                    "wants_forwarding": {"type": "boolean"},
-                    "sensitive_topic": {"type": "boolean"},
-                    "broad_mailbox_request": {"type": "boolean"},
                 },
                 "required": [
                     "entity_name",
                     "entity_company",
-                    "wants_raw_email",
-                    "wants_forwarding",
-                    "sensitive_topic",
-                    "broad_mailbox_request",
                 ],
             },
             "strict": True,
         }
         instructions = (
             "Extract intent for a strictly read-only shared email lookup. "
-            "Do not expand the user's scope. "
-            "Set broad_mailbox_request true for requests asking for all/every/full inbox style access. "
-            "Set wants_raw_email true for raw/verbatim/full-thread asks. "
-            "Set wants_forwarding true for forward/send/share style asks. "
-            "Set sensitive_topic true for personal, payroll, salary, tax, bank, medical, passport, or similar sensitive asks. "
             "entity_name should be the main company, founder, person, or topic the user wants looked up. "
             "entity_company should be null unless a clear company name is explicitly present."
         )
@@ -167,8 +144,4 @@ class OpenAIIntentExtractor:
                 if parsed.get("entity_company")
                 else None
             ),
-            wants_raw_email=bool(parsed.get("wants_raw_email", False)),
-            wants_forwarding=bool(parsed.get("wants_forwarding", False)),
-            sensitive_topic=bool(parsed.get("sensitive_topic", False)),
-            broad_mailbox_request=bool(parsed.get("broad_mailbox_request", False)),
         )
