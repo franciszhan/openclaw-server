@@ -87,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     google_auth_finish.add_argument("--callback-url", required=True)
     google_auth_status = google_auth_subparsers.add_parser("status")
     google_auth_status.add_argument("user_id")
+    google_auth_subparsers.add_parser("reconcile")
     google_auth_broker = google_auth_subparsers.add_parser("broker")
     google_auth_broker.add_argument("user_id")
 
@@ -191,6 +192,9 @@ def main() -> int:
             return 0
         if args.google_auth_command == "status":
             print(json.dumps(controller.google_auth_status(args.user_id), indent=2))
+            return 0
+        if args.google_auth_command == "reconcile":
+            print(json.dumps({"synced_user_ids": controller.reconcile_google_oauth_broker()}, indent=2))
             return 0
         if args.google_auth_command == "broker":
             original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "").strip()

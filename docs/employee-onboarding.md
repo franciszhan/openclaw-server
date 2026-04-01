@@ -156,7 +156,7 @@ Expected employee flow:
 1. Ask OpenClaw to connect Google.
 2. The agent should run `google-auth-status`.
 3. If not connected, it should run `connect-google` and return the consent URL.
-4. The employee opens the URL, approves readonly Gmail + Calendar access, and pastes the localhost callback URL back.
+4. The employee opens the URL, approves readonly Gmail + Calendar + Drive + Sheets + Docs access, and pastes the localhost callback URL back.
 5. The agent runs `finish-google "<callback_url>"`.
 6. The agent runs `google-auth-status` again to confirm the connection.
 

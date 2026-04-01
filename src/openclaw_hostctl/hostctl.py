@@ -94,7 +94,17 @@ class HostController:
         self._assert_prerequisites()
         user_dir = self.config.user_dir(user_id)
         if user_dir.exists():
-            raise ValueError(f"user '{user_id}' already exists")
+            record_path = self.config.user_record_path(user_id)
+            service_name = f"openclaw-vm@{user_id}.service"
+            active = subprocess.run(
+                ["systemctl", "is-active", service_name],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            if record_path.exists() or active.returncode == 0:
+                raise ValueError(f"user '{user_id}' already exists")
+            shutil.rmtree(user_dir)
 
         ip_address_text = str(self._allocate_guest_ip())
         machine_name = f"openclaw-{user_id}"
@@ -126,9 +136,12 @@ class HostController:
             self.config.user_config_store_path(user_id),
         )
         if stored_user_config_path:
+            normalize_user_manifest_file(stored_user_config_path)
+            manifest = load_json_file(stored_user_config_path)
+            validate_user_manifest(manifest)
             self._sync_coordinator_directory_from_manifest(
                 record,
-                load_json_file(stored_user_config_path),
+                manifest,
             )
         with mounted_image(Path(record.rootfs_path), self.config.loop_mount_base, user_id) as mount_dir:
             self._seed_guest_files(mount_dir, record, stored_user_config_path)
@@ -160,9 +173,11 @@ class HostController:
         )
         if stored_manifest is None:
             raise ValueError("activate-user requires a manifest or an existing stored manifest")
+        normalize_user_manifest_file(stored_manifest)
+        manifest = load_json_file(stored_manifest)
+        validate_user_manifest(manifest)
 
         with mounted_image(Path(user.rootfs_path), self.config.loop_mount_base, user_id) as mount_dir:
-            manifest = load_json_file(stored_manifest)
             self._apply_manifest_files(mount_dir, manifest)
             self._sync_coordinator_directory_from_manifest(user, manifest)
             self._ensure_guest_google_oauth_broker(user.user_id, mount_dir)
@@ -333,7 +348,7 @@ class HostController:
             destination = mount_dir / "opt/openclaw/skills/company"
             destination.parent.mkdir(parents=True, exist_ok=True)
             copy_tree(self.config.shared_skills_dir, destination)
-        ensure_company_agents_addendum(mount_dir)
+        ensure_company_agents_addendum_runtime(mount_dir)
         self._ensure_guest_admin_ssh(mount_dir)
 
     def _apply_manifest_files(self, mount_dir: Path, manifest: dict[str, object]) -> None:
@@ -415,7 +430,7 @@ class HostController:
             destination = mount_dir / "opt/openclaw/skills/company"
             destination.parent.mkdir(parents=True, exist_ok=True)
             copy_tree(self.config.shared_skills_dir, destination)
-        ensure_company_agents_addendum(mount_dir)
+        ensure_company_agents_addendum_runtime(mount_dir)
         ensure_guest_package_runtime(mount_dir)
         ensure_shared_access_guest_runtime(mount_dir, manifest)
         self._ensure_guest_admin_ssh(mount_dir)
@@ -455,6 +470,8 @@ class HostController:
     def _store_optional_file(self, source_path: Path | None, destination_path: Path) -> Path | None:
         if not source_path:
             return None
+        if source_path.exists():
+            os.chmod(source_path, 0o600)
         if source_path.resolve() == destination_path.resolve():
             os.chmod(destination_path, 0o600)
             return destination_path
@@ -631,7 +648,7 @@ class HostController:
             )
             os.chmod(private_key_path, 0o600)
             os.chmod(public_key_path, 0o644)
-        self._refresh_google_oauth_broker_authorized_keys()
+        self._refresh_google_oauth_broker_authorized_keys(keep_user_ids={user_id})
         return private_key_path
 
     def _ensure_google_oauth_broker_user(self) -> None:
@@ -701,6 +718,13 @@ class HostController:
         self._write_google_oauth_broker_sudoers()
         self._refresh_google_oauth_broker_authorized_keys()
 
+    def reconcile_google_oauth_broker(self) -> list[str]:
+        require_root()
+        self._ensure_google_oauth_broker_user()
+        synced = self._reconcile_google_oauth_broker_keys()
+        self._refresh_google_oauth_broker_authorized_keys()
+        return synced
+
     def _chown_google_oauth_broker_path(self, path: Path) -> None:
         try:
             account = pwd.getpwnam(GOOGLE_OAUTH_BROKER_USER)
@@ -708,10 +732,16 @@ class HostController:
             return
         os.chown(path, account.pw_uid, account.pw_gid)
 
-    def _refresh_google_oauth_broker_authorized_keys(self) -> None:
+    def _refresh_google_oauth_broker_authorized_keys(
+        self,
+        *,
+        keep_user_ids: set[str] | None = None,
+    ) -> None:
+        self._reconcile_google_oauth_broker_keys()
         broker_root = self._google_oauth_broker_root()
         ssh_dir = broker_root / ".ssh"
         authorized_keys_path = ssh_dir / "authorized_keys"
+        self._prune_orphaned_google_oauth_broker_materials(keep_user_ids=keep_user_ids)
         private_keys = sorted(self._google_oauth_broker_keys_dir().glob("*_vm_ed25519"))
         lines: list[str] = []
         for private_key_path in private_keys:
@@ -735,6 +765,89 @@ class HostController:
         authorized_keys_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
         os.chmod(authorized_keys_path, 0o600)
         self._chown_google_oauth_broker_path(authorized_keys_path)
+
+    def _reconcile_google_oauth_broker_keys(self) -> list[str]:
+        synced: list[str] = []
+        for user in self.list_users():
+            private_key_path, public_key_path = self._google_oauth_broker_key_paths(user.user_id)
+            if private_key_path.exists() and public_key_path.exists():
+                continue
+            private_key = self._read_guest_google_oauth_broker_private_key(user)
+            if not private_key:
+                continue
+            private_key_path.parent.mkdir(parents=True, exist_ok=True)
+            private_key_path.write_text(private_key, encoding="utf-8")
+            os.chmod(private_key_path, 0o600)
+            public_key = subprocess.run(
+                ["ssh-keygen", "-y", "-f", str(private_key_path)],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+            public_key_path.write_text(
+                f"{public_key} openclaw-google-broker-{user.user_id}\n",
+                encoding="utf-8",
+            )
+            os.chmod(public_key_path, 0o644)
+            self._chown_google_oauth_broker_path(private_key_path)
+            self._chown_google_oauth_broker_path(public_key_path)
+            synced.append(user.user_id)
+        return synced
+
+    def _read_guest_google_oauth_broker_private_key(self, user: UserRecord) -> str | None:
+        private_key = self.config.automation_ssh_private_key_path
+        if not private_key or not private_key.exists():
+            return None
+        self.config.shared_access_root.mkdir(parents=True, exist_ok=True)
+        self.config.shared_access_known_hosts_path.touch(exist_ok=True)
+        command = [
+            "ssh",
+            "-i",
+            str(private_key),
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            f"UserKnownHostsFile={self.config.shared_access_known_hosts_path}",
+            "-o",
+            "ConnectTimeout=10",
+            f"admin@{user.ip_address}",
+            "cat /home/admin/.ssh/openclaw-google-broker",
+        ]
+        result = subprocess.run(
+            command,
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=20,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        return result.stdout
+
+    def _prune_orphaned_google_oauth_broker_materials(
+        self,
+        *,
+        keep_user_ids: set[str] | None = None,
+    ) -> None:
+        valid_user_ids = {record.user_id for record in self.list_users()}
+        if keep_user_ids:
+            valid_user_ids.update(keep_user_ids)
+        keys_dir = self._google_oauth_broker_keys_dir()
+        state_root = self._google_oauth_broker_root() / "state"
+        for private_key_path in sorted(keys_dir.glob("*_vm_ed25519")):
+            user_id = private_key_path.name.removesuffix("_vm_ed25519")
+            if user_id in valid_user_ids:
+                continue
+            public_key_path = private_key_path.with_suffix(".pub")
+            if private_key_path.exists():
+                private_key_path.unlink()
+            if public_key_path.exists():
+                public_key_path.unlink()
+            state_dir = state_root / user_id
+            if state_dir.exists():
+                shutil.rmtree(state_dir)
 
     def _write_google_oauth_broker_sudoers(
         self,
@@ -775,6 +888,9 @@ class HostController:
         scope = [
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "https://www.googleapis.com/auth/documents.readonly",
         ]
         state = secrets.token_hex(24)
         auth_state = {
@@ -798,7 +914,7 @@ class HostController:
         }
         url = f"{client['auth_uri']}?{urlencode(params)}"
         return (
-            "Open this URL in a browser and approve read-only Gmail and Calendar access:\n"
+            "Open this URL in a browser and approve read-only Gmail, Calendar, Drive, Sheets, and Docs access:\n"
             f"{url}\n\n"
             "After approval, Google will redirect to localhost and likely fail to load.\n"
             "Copy the full URL from the browser address bar and send it back to finish Google auth."
@@ -1008,6 +1124,84 @@ def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
 def build_guest_user_config(manifest: dict[str, object]) -> dict[str, object]:
     stripped_keys = {"openclaw", "shared_access", "slack_user_id"}
     return {key: value for key, value in manifest.items() if key not in stripped_keys}
+
+
+def normalize_user_manifest(manifest: dict[str, object]) -> dict[str, object]:
+    normalized = json.loads(json.dumps(manifest))
+    openclaw = normalized.get("openclaw", {})
+    if not isinstance(openclaw, dict):
+        return normalized
+    legacy_slack = openclaw.get("slack")
+    channels = openclaw.get("channels")
+    if isinstance(legacy_slack, dict) and legacy_slack:
+        if not isinstance(channels, dict):
+            channels = {}
+            openclaw["channels"] = channels
+        slack = channels.get("slack")
+        if not isinstance(slack, dict) or not slack:
+            channels["slack"] = legacy_slack
+        openclaw.pop("slack", None)
+    return normalized
+
+
+def normalize_user_manifest_file(path: Path) -> None:
+    manifest = normalize_user_manifest(load_json_file(path))
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def validate_user_manifest(manifest: dict[str, object]) -> None:
+    openclaw = manifest.get("openclaw", {})
+    if openclaw is not None and not isinstance(openclaw, dict):
+        raise ValueError("manifest openclaw section must be a JSON object")
+
+    env_values = extract_openclaw_env(manifest)
+    auth_profiles = {}
+    if isinstance(openclaw, dict):
+        auth_profiles = openclaw.get("authProfiles", {})
+        if auth_profiles is not None and not isinstance(auth_profiles, dict):
+            raise ValueError("manifest openclaw.authProfiles must be a JSON object")
+    if isinstance(auth_profiles, dict):
+        for profile_name, profile_config in auth_profiles.items():
+            if not isinstance(profile_config, dict):
+                raise ValueError(f"manifest openclaw.authProfiles.{profile_name} must be a JSON object")
+            provider = str(profile_config.get("provider", "")).strip()
+            key_env = str(profile_config.get("keyEnv", "")).strip()
+            if not provider:
+                raise ValueError(f"manifest openclaw.authProfiles.{profile_name}.provider is required")
+            if not key_env:
+                raise ValueError(f"manifest openclaw.authProfiles.{profile_name}.keyEnv is required")
+            if key_env not in env_values:
+                raise ValueError(
+                    f"manifest openclaw.authProfiles.{profile_name}.keyEnv '{key_env}' is missing from openclaw.env"
+                )
+
+    slack = _extract_slack_manifest(manifest)
+    if slack:
+        bot_token = str(slack.get("botToken", "")).strip()
+        app_token = str(slack.get("appToken", "")).strip()
+        if not bot_token:
+            raise ValueError("manifest openclaw.channels.slack.botToken is required")
+        if not app_token:
+            raise ValueError("manifest openclaw.channels.slack.appToken is required")
+        allow_from = slack.get("allowFrom")
+        if allow_from is not None and not isinstance(allow_from, list):
+            raise ValueError("manifest openclaw.channels.slack.allowFrom must be a list")
+
+    shared_access = manifest.get("shared_access", {})
+    if shared_access is not None and not isinstance(shared_access, dict):
+        raise ValueError("manifest shared_access section must be a JSON object")
+    if isinstance(shared_access, dict) and shared_access.get("opt_in"):
+        slack_user_id = str(manifest.get("slack_user_id", "")).strip()
+        if not slack_user_id:
+            raise ValueError("manifest slack_user_id is required when shared_access.opt_in is true")
+        capabilities = shared_access.get("capabilities", [])
+        if capabilities is not None and not isinstance(capabilities, list):
+            raise ValueError("manifest shared_access.capabilities must be a list")
+        if isinstance(capabilities, list):
+            invalid_capabilities = [value for value in capabilities if str(value) != "email_intro_lookup"]
+            if invalid_capabilities:
+                raise ValueError("manifest shared_access.capabilities only supports email_intro_lookup")
 
 
 def write_env_file(path: Path, values: dict[str, str]) -> None:
@@ -1241,12 +1435,14 @@ def _extract_slack_manifest(manifest: dict[str, object]) -> dict[str, object]:
     if not isinstance(openclaw, dict):
         return {}
     channels = openclaw.get("channels", {})
-    if not isinstance(channels, dict):
-        return {}
-    slack = channels.get("slack", {})
-    if not isinstance(slack, dict):
-        return {}
-    return dict(slack)
+    if isinstance(channels, dict):
+        slack = channels.get("slack", {})
+        if isinstance(slack, dict) and slack:
+            return dict(slack)
+    legacy_slack = openclaw.get("slack", {})
+    if isinstance(legacy_slack, dict) and legacy_slack:
+        return dict(legacy_slack)
+    return {}
 
 
 def ensure_shared_access_guest_runtime(mount_dir: Path, manifest: dict[str, object]) -> None:
@@ -1363,12 +1559,40 @@ def ensure_company_agents_addendum(mount_dir: Path) -> None:
     agents_path = mount_dir / "home/admin/.openclaw/workspace/AGENTS.md"
     if not agents_path.exists():
         return
+    append_company_agents_addendum(agents_path)
+
+
+def append_company_agents_addendum(agents_path: Path) -> bool:
     existing = agents_path.read_text(encoding="utf-8")
     if COMPANY_AGENTS_ADDENDUM_MARKER in existing:
-        return
+        return False
     addendum = render_company_agents_addendum()
     separator = "\n\n" if existing and not existing.endswith("\n\n") else ""
     agents_path.write_text(existing + separator + addendum, encoding="utf-8")
+    return True
+
+
+def ensure_company_agents_addendum_runtime(mount_dir: Path) -> None:
+    ensure_company_agents_addendum(mount_dir)
+    script_path = mount_dir / "usr/local/sbin/openclaw-company-agents-refresh.sh"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(render_company_agents_refresh_script(), encoding="utf-8")
+    os.chmod(script_path, 0o755)
+
+    service_path = mount_dir / "etc/systemd/system/openclaw-company-agents-refresh.service"
+    service_path.parent.mkdir(parents=True, exist_ok=True)
+    service_path.write_text(render_company_agents_refresh_service(), encoding="utf-8")
+    os.chmod(service_path, 0o644)
+
+    path_unit_path = mount_dir / "etc/systemd/system/openclaw-company-agents-refresh.path"
+    path_unit_path.write_text(render_company_agents_refresh_path(), encoding="utf-8")
+    os.chmod(path_unit_path, 0o644)
+
+    wants_dir = mount_dir / "etc/systemd/system/multi-user.target.wants"
+    wants_dir.mkdir(parents=True, exist_ok=True)
+    wants_link = wants_dir / "openclaw-company-agents-refresh.path"
+    wants_link.unlink(missing_ok=True)
+    os.symlink("/etc/systemd/system/openclaw-company-agents-refresh.path", wants_link)
 
 
 def render_company_agents_addendum() -> str:
@@ -1384,6 +1608,55 @@ def render_company_agents_addendum() -> str:
   - `finish-google "<callback_url>"`
 - If the user asks to connect Gmail, Calendar, email, inbox, or schedule access, prefer these helper commands over abstract setup advice.
 - If the user explicitly asks you to run one of these commands, execute it and return the relevant output.
+"""
+
+
+def render_company_agents_refresh_service() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Append OpenClaw company AGENTS addendum\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "ExecStart=/usr/local/sbin/openclaw-company-agents-refresh.sh\n"
+    )
+
+
+def render_company_agents_refresh_path() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Watch for OpenClaw workspace AGENTS.md\n\n"
+        "[Path]\n"
+        "PathExists=/home/admin/.openclaw/workspace/AGENTS.md\n"
+        "PathChanged=/home/admin/.openclaw/workspace/AGENTS.md\n"
+        "Unit=openclaw-company-agents-refresh.service\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
+def render_company_agents_refresh_script() -> str:
+    addendum_json = json.dumps(render_company_agents_addendum())
+    marker_json = json.dumps(COMPANY_AGENTS_ADDENDUM_MARKER)
+    return f"""#!/usr/bin/env python3
+from pathlib import Path
+import os
+
+AGENTS_PATH = Path("/home/admin/.openclaw/workspace/AGENTS.md")
+MARKER = {marker_json}
+ADDENDUM = {addendum_json}
+
+if not AGENTS_PATH.exists():
+    raise SystemExit(0)
+
+content = AGENTS_PATH.read_text(encoding="utf-8")
+if MARKER not in content:
+    separator = "\\n\\n" if content and not content.endswith("\\n\\n") else ""
+    AGENTS_PATH.write_text(content + separator + ADDENDUM, encoding="utf-8")
+
+try:
+    os.chown(AGENTS_PATH, 1000, 1000)
+except PermissionError:
+    pass
 """
 
 

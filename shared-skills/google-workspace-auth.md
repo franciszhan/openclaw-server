@@ -1,10 +1,10 @@
 # Google Workspace Auth
 
-Use this skill when the user wants Gmail or Google Calendar access inside OpenClaw.
+Use this skill when the user wants Gmail, Google Calendar, Google Drive, Google Sheets, or Google Docs access inside OpenClaw.
 
 ## Goal
 
-Help the user connect their own Google account with read-only Gmail and Calendar scopes.
+Help the user connect their own Google account with read-only Gmail, Calendar, Drive, Sheets, and Docs scopes.
 
 Treat the helper commands in this skill as real tools that already exist on the VM. Do not act like Google auth is unavailable when these commands are present.
 
@@ -18,9 +18,9 @@ Treat the helper commands in this skill as real tools that already exist on the 
 
 - Do not print client secrets or token file contents.
 - Treat the callback URL as sensitive user auth material.
-- The shared OAuth client is preinstalled on the VM.
+- The shared OAuth client stays on the host behind the Google auth broker.
 - The per-user token is stored only inside that user VM after they complete auth.
-- If the user asks to connect Google, Gmail, Calendar, email, inbox, meetings, or schedule access, prefer using these commands over explaining abstract setup steps.
+- If the user asks to connect Google, Gmail, Calendar, Drive, Docs, Sheets, email, inbox, meetings, or schedule access, prefer using these commands over explaining abstract setup steps.
 - If the user explicitly asks you to run one of these commands, execute it instead of restating the flow.
 - Do not ask the user to SSH or manually inspect files when the helper commands can answer the question.
 
@@ -41,8 +41,14 @@ Use this flow when the user says things like:
 - `connect gmail`
 - `set up email access`
 - `set up calendar access`
+- `set up drive access`
+- `set up docs access`
+- `set up sheets access`
 - `can you check my inbox`
 - `can you look at my calendar`
+- `can you read my drive`
+- `can you look at my docs`
+- `can you check my spreadsheet`
 - `gmail isn't connected`
 - `google auth isn't working`
 
@@ -60,10 +66,13 @@ Also use it when the user asks for Gmail or Calendar help and there is any sign 
 
 - `https://www.googleapis.com/auth/gmail.readonly`
 - `https://www.googleapis.com/auth/calendar.readonly`
+- `https://www.googleapis.com/auth/drive.readonly`
+- `https://www.googleapis.com/auth/spreadsheets.readonly`
+- `https://www.googleapis.com/auth/documents.readonly`
 
 ## Response Style
 
 - Be direct.
 - Tell the user exactly which step they are on.
-- After success, confirm that Google auth is connected and that future Gmail/Calendar requests should work.
+- After success, confirm that Google auth is connected and that future Gmail/Calendar/Drive/Docs/Sheets requests should work.
 - When returning the consent URL, keep the response short and action-oriented.

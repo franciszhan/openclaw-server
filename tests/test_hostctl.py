@@ -10,14 +10,21 @@ from unittest import mock
 from openclaw_hostctl.config import save_user_record
 from openclaw_hostctl.hostctl import (
     HostController,
+    append_company_agents_addendum,
     ensure_guest_google_oauth_runtime,
     ensure_company_agents_addendum,
+    ensure_company_agents_addendum_runtime,
+    normalize_user_manifest,
     render_email_intro_lookup_script,
     render_guest_network,
+    render_company_agents_refresh_path,
+    render_company_agents_refresh_script,
+    render_company_agents_refresh_service,
     render_google_auth_status_wrapper,
     render_company_agents_addendum,
     render_google_connect_wrapper,
     render_google_finish_wrapper,
+    validate_user_manifest,
 )
 from openclaw_hostctl.models import HostConfig, UserRecord
 from openclaw_hostctl.firecracker import make_mac_address, make_tap_name, render_firecracker_config
@@ -49,6 +56,71 @@ def example_config(storage_root: Path) -> HostConfig:
 
 
 class HostControllerTests(unittest.TestCase):
+    def test_normalize_user_manifest_moves_legacy_slack_into_channels(self) -> None:
+        manifest = {
+            "user_id": "trey",
+            "openclaw": {
+                "env": {"OPENAI_API_KEY": "sk-secret"},
+                "slack": {
+                    "botToken": "xoxb-legacy",
+                    "appToken": "xapp-legacy",
+                    "allowFrom": ["U999"],
+                },
+            },
+        }
+        normalized = normalize_user_manifest(manifest)
+        self.assertNotIn("slack", normalized["openclaw"])
+        self.assertEqual(
+            normalized["openclaw"]["channels"]["slack"]["botToken"],
+            "xoxb-legacy",
+        )
+        self.assertEqual(
+            normalized["openclaw"]["channels"]["slack"]["allowFrom"],
+            ["U999"],
+        )
+
+    def test_google_auth_start_requests_workspace_readonly_scopes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            user_dir = config.vm_root / "alice"
+            user_dir.mkdir(parents=True, exist_ok=True)
+            save_user_record(
+                user_dir / "vm.json",
+                UserRecord(
+                    user_id="alice",
+                    display_name="Alice",
+                    machine_name="openclaw-alice",
+                    ip_address="172.31.0.10",
+                    mac_address="06:00:ac:1f:00:0a",
+                    tap_name="ocalice",
+                    rootfs_path=str(config.storage_root / "alice/rootfs.ext4"),
+                    created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+            with mock.patch("openclaw_hostctl.hostctl.require_root"), mock.patch(
+                "openclaw_hostctl.hostctl.load_google_oauth_client",
+                return_value={
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                },
+            ), mock.patch.object(
+                HostController,
+                "_google_oauth_broker_state_dir",
+                return_value=storage_root / "broker/state/alice",
+            ), mock.patch.object(
+                HostController, "_chown_google_oauth_broker_path"
+            ):
+                url = controller.google_auth_start("alice")
+            self.assertIn("gmail.readonly", url)
+            self.assertIn("calendar.readonly", url)
+            self.assertIn("drive.readonly", url)
+            self.assertIn("spreadsheets.readonly", url)
+            self.assertIn("documents.readonly", url)
+
     def test_google_oauth_wrappers_use_host_side_broker(self) -> None:
         status_script = render_google_auth_status_wrapper(
             host_ip="172.31.0.1",
@@ -151,6 +223,173 @@ class HostControllerTests(unittest.TestCase):
                 content.count(render_company_agents_addendum().splitlines()[0]),
                 1,
             )
+
+    def test_append_company_agents_addendum_returns_false_when_already_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            agents_path = Path(tmp_dir) / "AGENTS.md"
+            agents_path.write_text(
+                "# AGENTS.md\n\n" + render_company_agents_addendum(),
+                encoding="utf-8",
+            )
+            self.assertFalse(append_company_agents_addendum(agents_path))
+
+    def test_company_agents_runtime_installs_path_based_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mount_dir = Path(tmp_dir) / "mount"
+            ensure_company_agents_addendum_runtime(mount_dir)
+            self.assertTrue(
+                (mount_dir / "usr/local/sbin/openclaw-company-agents-refresh.sh").exists()
+            )
+            self.assertTrue(
+                (mount_dir / "etc/systemd/system/openclaw-company-agents-refresh.service").exists()
+            )
+            self.assertTrue(
+                (mount_dir / "etc/systemd/system/openclaw-company-agents-refresh.path").exists()
+            )
+            self.assertTrue(
+                (
+                    mount_dir
+                    / "etc/systemd/system/multi-user.target.wants/openclaw-company-agents-refresh.path"
+                ).is_symlink()
+            )
+            self.assertIn("PathExists=/home/admin/.openclaw/workspace/AGENTS.md", render_company_agents_refresh_path())
+            self.assertIn("openclaw-company-agents-refresh.sh", render_company_agents_refresh_service())
+            self.assertIn("OPENCLAW COMPANY ADDENDUM", render_company_agents_refresh_script())
+
+    def test_validate_user_manifest_rejects_missing_slack_tokens(self) -> None:
+        with self.assertRaisesRegex(ValueError, "botToken is required"):
+            validate_user_manifest(
+                {
+                    "openclaw": {
+                        "channels": {
+                            "slack": {
+                                "appToken": "xapp-test",
+                            }
+                        }
+                    }
+                }
+            )
+
+    def test_validate_user_manifest_requires_env_for_auth_profile(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing from openclaw.env"):
+            validate_user_manifest(
+                {
+                    "openclaw": {
+                        "authProfiles": {
+                            "openai:default": {
+                                "provider": "openai",
+                                "type": "api_key",
+                                "keyEnv": "OPENAI_API_KEY",
+                            }
+                        }
+                    }
+                }
+            )
+
+    def test_validate_user_manifest_requires_slack_user_id_for_opt_in(self) -> None:
+        with self.assertRaisesRegex(ValueError, "slack_user_id is required"):
+            validate_user_manifest(
+                {
+                    "shared_access": {
+                        "opt_in": True,
+                        "capabilities": ["email_intro_lookup"],
+                    }
+                }
+            )
+
+    def test_refresh_google_oauth_broker_authorized_keys_prunes_orphaned_users(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            valid_user_dir = config.vm_root / "alice"
+            valid_user_dir.mkdir(parents=True, exist_ok=True)
+            save_user_record(
+                valid_user_dir / "vm.json",
+                UserRecord(
+                    user_id="alice",
+                    display_name="Alice",
+                    machine_name="openclaw-alice",
+                    ip_address="172.31.0.10",
+                    mac_address="06:00:ac:1f:00:0a",
+                    tap_name="ocalice",
+                    rootfs_path=str(config.storage_root / "alice/rootfs.ext4"),
+                    created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+            broker_root = storage_root / "google-oauth-broker"
+            keys_dir = broker_root / "keys"
+            ssh_dir = broker_root / ".ssh"
+            state_root = broker_root / "state"
+            keys_dir.mkdir(parents=True, exist_ok=True)
+            ssh_dir.mkdir(parents=True, exist_ok=True)
+            (state_root / "bob").mkdir(parents=True, exist_ok=True)
+            (keys_dir / "alice_vm_ed25519").write_text("alice-private", encoding="utf-8")
+            (keys_dir / "alice_vm_ed25519.pub").write_text("ssh-ed25519 ALICE alice", encoding="utf-8")
+            (keys_dir / "bob_vm_ed25519").write_text("bob-private", encoding="utf-8")
+            (keys_dir / "bob_vm_ed25519.pub").write_text("ssh-ed25519 BOB bob", encoding="utf-8")
+            with mock.patch.object(
+                HostController,
+                "_google_oauth_broker_root",
+                return_value=broker_root,
+            ), mock.patch.object(HostController, "_chown_google_oauth_broker_path"):
+                controller._refresh_google_oauth_broker_authorized_keys()
+            self.assertTrue((keys_dir / "alice_vm_ed25519").exists())
+            self.assertTrue((keys_dir / "alice_vm_ed25519.pub").exists())
+            self.assertFalse((keys_dir / "bob_vm_ed25519").exists())
+            self.assertFalse((keys_dir / "bob_vm_ed25519.pub").exists())
+            self.assertFalse((state_root / "bob").exists())
+            authorized_keys = (ssh_dir / "authorized_keys").read_text(encoding="utf-8")
+            self.assertIn("openclaw-hostctl google-auth broker alice", authorized_keys)
+            self.assertNotIn("openclaw-hostctl google-auth broker bob", authorized_keys)
+
+    def test_refresh_google_oauth_broker_authorized_keys_reconciles_missing_active_user_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            valid_user_dir = config.vm_root / "francis"
+            valid_user_dir.mkdir(parents=True, exist_ok=True)
+            save_user_record(
+                valid_user_dir / "vm.json",
+                UserRecord(
+                    user_id="francis",
+                    display_name="Francis",
+                    machine_name="openclaw-francis",
+                    ip_address="172.31.0.11",
+                    mac_address="06:00:ac:1f:00:0b",
+                    tap_name="ocfrancis",
+                    rootfs_path=str(config.storage_root / "francis/rootfs.ext4"),
+                    created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+            broker_root = storage_root / "google-oauth-broker"
+            keys_dir = broker_root / "keys"
+            ssh_dir = broker_root / ".ssh"
+            keys_dir.mkdir(parents=True, exist_ok=True)
+            ssh_dir.mkdir(parents=True, exist_ok=True)
+            with mock.patch.object(
+                HostController,
+                "_google_oauth_broker_root",
+                return_value=broker_root,
+            ), mock.patch.object(
+                HostController,
+                "_read_guest_google_oauth_broker_private_key",
+                return_value="PRIVATE KEY\n",
+            ), mock.patch.object(
+                HostController, "_chown_google_oauth_broker_path"
+            ), mock.patch(
+                "openclaw_hostctl.hostctl.subprocess.run"
+            ) as subprocess_run:
+                subprocess_run.return_value = mock.Mock(
+                    stdout="ssh-ed25519 RECONCILEDKEY",
+                    returncode=0,
+                )
+                controller._refresh_google_oauth_broker_authorized_keys()
+            self.assertTrue((keys_dir / "francis_vm_ed25519").exists())
+            self.assertTrue((keys_dir / "francis_vm_ed25519.pub").exists())
+            authorized_keys = (ssh_dir / "authorized_keys").read_text(encoding="utf-8")
+            self.assertIn("openclaw-hostctl google-auth broker francis", authorized_keys)
 
     def test_allocate_guest_ip_uses_first_free_address(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -410,6 +649,121 @@ class HostControllerTests(unittest.TestCase):
                 "admin ALL=(root) NOPASSWD: /usr/local/sbin/openclaw-apt-install-root",
             )
 
+    def test_provision_user_recovers_from_partial_directory_without_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            controller.init_layout()
+            user_dir = config.user_dir("mob")
+            user_dir.mkdir(parents=True, exist_ok=True)
+            (user_dir / "rootfs.ext4").write_text("stale", encoding="utf-8")
+            mount_dir = storage_root / "mounts/mob"
+            mount_dir.mkdir(parents=True, exist_ok=True)
+
+            @contextlib.contextmanager
+            def fake_mount(_image: Path, _mount_base: Path, _mount_name: str):
+                yield mount_dir
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch.object(HostController, "_assert_prerequisites"),
+                mock.patch(
+                    "openclaw_hostctl.hostctl.subprocess.run",
+                    return_value=mock.Mock(returncode=3, stdout="", stderr=""),
+                ),
+                mock.patch("openclaw_hostctl.hostctl.clone_disk"),
+                mock.patch("openclaw_hostctl.hostctl.mounted_image", fake_mount),
+                mock.patch.object(HostController, "_seed_guest_files"),
+                mock.patch.object(HostController, "_ensure_guest_google_oauth_broker"),
+                mock.patch.object(HostController, "create_snapshot"),
+            ):
+                record = controller.provision_user(
+                    "mob",
+                    display_name="Mob",
+                    user_config_path=None,
+                    disk_size_gib=None,
+                )
+
+            self.assertEqual(record.user_id, "mob")
+            self.assertTrue(config.user_record_path("mob").exists())
+            self.assertTrue(config.snapshot_dir("mob").exists())
+            self.assertTrue(config.runtime_dir("mob").exists())
+
+    def test_activate_user_accepts_legacy_top_level_slack_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            controller.init_layout()
+            record = UserRecord(
+                user_id="trey",
+                display_name="Trey",
+                machine_name="openclaw-trey",
+                ip_address="172.31.0.10",
+                mac_address="06:00:ac:1f:00:0a",
+                tap_name="octrey",
+                rootfs_path=str(config.user_rootfs_path("trey")),
+                created_at="2026-03-10T00:00:00Z",
+            )
+            config.user_dir("trey").mkdir(parents=True, exist_ok=True)
+            save_user_record(config.user_record_path("trey"), record)
+            Path(record.rootfs_path).write_text("image", encoding="utf-8")
+            config.user_config_store_path("trey").write_text(
+                json.dumps(
+                    {
+                        "user_id": "trey",
+                        "profile": "default",
+                        "openclaw": {
+                            "env": {
+                                "OPENAI_API_KEY": "sk-secret",
+                            },
+                            "slack": {
+                                "enabled": True,
+                                "botToken": "xoxb-legacy",
+                                "appToken": "xapp-legacy",
+                                "allowFrom": ["U999"],
+                            },
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            mount_dir = storage_root / "mounts/trey"
+            mount_dir.mkdir(parents=True)
+            (mount_dir / "etc").mkdir(parents=True, exist_ok=True)
+            (mount_dir / "etc/passwd").write_text(
+                "admin:x:1000:1000::/home/admin:/bin/bash\n",
+                encoding="utf-8",
+            )
+            (mount_dir / "home/admin").mkdir(parents=True, exist_ok=True)
+
+            @contextlib.contextmanager
+            def fake_mount(_image: Path, _mount_base: Path, _mount_name: str):
+                yield mount_dir
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch("openclaw_hostctl.hostctl.mounted_image", fake_mount),
+                mock.patch("openclaw_hostctl.hostctl.chown_tree"),
+                mock.patch("openclaw_hostctl.hostctl.os.chown"),
+                mock.patch.object(HostController, "is_running", return_value=False),
+            ):
+                controller.activate_user("trey", manifest_path=None, force=False, restart=False)
+
+            openclaw_config = json.loads(
+                (mount_dir / "home/admin/.openclaw/openclaw.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(openclaw_config["channels"]["slack"]["botToken"], "xoxb-legacy")
+            self.assertEqual(openclaw_config["channels"]["slack"]["appToken"], "xapp-legacy")
+            slack_allow_from = json.loads(
+                (
+                    mount_dir / "home/admin/.openclaw/credentials/slack-default-allowFrom.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(slack_allow_from["allowFrom"], ["U999"])
+
     def test_activate_user_persists_new_manifest_for_reuse(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             storage_root = Path(tmp_dir)
@@ -472,11 +826,15 @@ class HostControllerTests(unittest.TestCase):
                 )
 
             self.assertEqual(
-                config.user_config_store_path("alice").read_text(encoding="utf-8"),
-                manifest_path.read_text(encoding="utf-8"),
+                json.loads(config.user_config_store_path("alice").read_text(encoding="utf-8")),
+                json.loads(manifest_path.read_text(encoding="utf-8")),
             )
             self.assertEqual(
                 oct(config.user_config_store_path("alice").stat().st_mode & 0o777),
+                "0o600",
+            )
+            self.assertEqual(
+                oct(manifest_path.stat().st_mode & 0o777),
                 "0o600",
             )
 

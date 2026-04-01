@@ -12,7 +12,7 @@
   "allowed_public_channel_ids": [
     "C02PT4UQZRN"
   ],
-  "request_timeout_seconds": 180,
+  "request_timeout_seconds": 300,
   "intent_extractor_model": "gpt-5-nano",
   "intent_extractor_api_key_env": "OPENAI_API_KEY",
   "intent_extractor_timeout_seconds": 15,

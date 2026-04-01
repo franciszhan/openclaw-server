@@ -327,6 +327,7 @@ Minimal Slack app requirements for coordinator testing:
   - `chat:write`
   - `app_mentions:read`
   - `im:history`
+  - `im:write`
 - events:
   - `app_mention`
   - `message.im`
