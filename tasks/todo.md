@@ -45,3 +45,33 @@
 - [x] Document the AgentCoordinator Slack app and prod host test setup.
 - [x] Verify the coordinator locally with unit tests and compile checks.
 - [x] Wire the prod host with coordinator config for the Francis DM test path.
+
+## OpenClaw Update Sweep
+
+- [x] Inspect per-VM OpenClaw versions and recent activity to identify idle VMs.
+- [x] Update only VMs that appear idle and leave active ones untouched.
+- [x] Verify post-update versions and record any VMs intentionally skipped.
+
+## Update Sweep Review
+
+- Verified pre-update state across 15 VMs: all were on `OpenClaw 2026.3.12 (6472949)`.
+- Verified low recent activity before update: no workspace/state/session file churn in the prior 30 minutes; only baseline gateway socket reconnect log lines.
+- The built-in `openclaw update --yes` path failed under the `admin` user because the install is global under `/usr/lib/node_modules/openclaw` and `npm i -g` hit `EACCES`.
+- Successful update path: `sudo npm i -g openclaw@latest --no-fund --no-audit --loglevel=error`, then `systemctl --user restart openclaw-gateway.service`.
+- Verified post-update state across all 15 VMs: `OpenClaw 2026.4.8 (9ece252)` and gateway `active`.
+
+## Google Broker Drift Audit
+
+- [x] Trace every `alice` reference in runtime code, tests, and docs to separate benign examples from real broker-state risks.
+- [x] Remove broker refresh/prune side effects from broker directory setup so provisioning cannot mutate auth state implicitly.
+- [x] Add regression tests covering broker directory setup and stale-orphan pruning with neutral fixture names.
+- [x] Sync the host-side fix to prod and verify the broker inventory remains aligned with live VM users.
+
+## Google Broker Drift Review
+
+- Root cause 1: `_ensure_google_oauth_broker_directories()` refreshed and pruned broker auth state as a side effect, so innocuous broker setup during provisioning could mutate live auth inventory.
+- Root cause 2: `HostConfig` did not carry the broker root path, so prod host tests instantiated temp configs while still writing real broker state under `/var/lib/openclaw/google-oauth-broker`.
+- Benign `alice` references remain in some historical docs/tests as examples only; the runtime regression came from the hardcoded broker root plus side-effectful refresh path, not from example strings by themselves.
+- Verified locally with `PYTHONPATH=src python3 -m unittest tests.test_hostctl` and `python3 -m compileall src/openclaw_hostctl tests/test_hostctl.py`.
+- Synced host-side fixes to prod, added explicit `google_oauth_broker_root` to `/etc/openclaw/host-config.json`, and verified the prod host tests no longer mutate live broker state.
+- Rebuilt the prod broker inventory with `openclaw-hostctl google-auth reconcile`, verified `alice` is gone from host broker state, and confirmed `google-auth-status` succeeds again on both `francis` and `lauren`.

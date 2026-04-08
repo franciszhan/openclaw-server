@@ -69,10 +69,11 @@ Also use it when the user asks for Gmail or Calendar help and there is any sign 
 - `https://www.googleapis.com/auth/drive.readonly`
 - `https://www.googleapis.com/auth/spreadsheets.readonly`
 - `https://www.googleapis.com/auth/documents.readonly`
+- `https://www.googleapis.com/auth/presentations.readonly`
 
 ## Response Style
 
 - Be direct.
 - Tell the user exactly which step they are on.
-- After success, confirm that Google auth is connected and that future Gmail/Calendar/Drive/Docs/Sheets requests should work.
+- After success, confirm that Google auth is connected and that future Gmail/Calendar/Drive/Docs/Sheets/Slides requests should work.
 - When returning the consent URL, keep the response short and action-oriented.

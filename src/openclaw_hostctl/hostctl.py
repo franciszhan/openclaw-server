@@ -32,7 +32,6 @@ from .models import HostConfig, UserRecord
 
 DEFAULT_COORDINATOR_CONFIG_PATH = Path("/etc/openclaw/coordinator-config.json")
 DEFAULT_GOOGLE_OAUTH_CLIENT_PATH = Path("/etc/openclaw/google-oauth-client.json")
-DEFAULT_GOOGLE_OAUTH_BROKER_ROOT = Path("/var/lib/openclaw/google-oauth-broker")
 DEFAULT_HOST_SSH_ED25519_PUBLIC_KEY_PATH = Path("/etc/ssh/ssh_host_ed25519_key.pub")
 DEFAULT_GOOGLE_OAUTH_BROKER_SUDOERS_PATH = Path("/etc/sudoers.d/openclaw-google-oauth-broker")
 GOOGLE_OAUTH_BROKER_USER = "openclaw-google-broker"
@@ -612,7 +611,7 @@ class HostController:
         )
 
     def _google_oauth_broker_root(self) -> Path:
-        return DEFAULT_GOOGLE_OAUTH_BROKER_ROOT
+        return self.config.google_oauth_broker_root
 
     def _google_oauth_broker_keys_dir(self) -> Path:
         return self._google_oauth_broker_root() / "keys"
@@ -716,7 +715,6 @@ class HostController:
         self._chown_google_oauth_broker_path(state_root)
         self._chown_google_oauth_broker_path(ssh_dir)
         self._write_google_oauth_broker_sudoers()
-        self._refresh_google_oauth_broker_authorized_keys()
 
     def reconcile_google_oauth_broker(self) -> list[str]:
         require_root()
@@ -891,6 +889,7 @@ class HostController:
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/spreadsheets.readonly",
             "https://www.googleapis.com/auth/documents.readonly",
+            "https://www.googleapis.com/auth/presentations.readonly",
         ]
         state = secrets.token_hex(24)
         auth_state = {
@@ -914,7 +913,7 @@ class HostController:
         }
         url = f"{client['auth_uri']}?{urlencode(params)}"
         return (
-            "Open this URL in a browser and approve read-only Gmail, Calendar, Drive, Sheets, and Docs access:\n"
+            "Open this URL in a browser and approve read-only Gmail, Calendar, Drive, Sheets, Docs, and Slides access:\n"
             f"{url}\n\n"
             "After approval, Google will redirect to localhost and likely fail to load.\n"
             "Copy the full URL from the browser address bar and send it back to finish Google auth."
@@ -1807,7 +1806,7 @@ function sanitizeLookupResult(raw) {
       throw new Error(`disallowed raw content field in result: ${key}`);
     }
   }
-  const required = ["summary_details", "business_update", "best_point_of_contact"];
+  const required = ["answer", "supporting_context", "why_these_emails"];
   const output = {};
   for (const key of required) {
     output[key] = typeof raw[key] === "string" ? raw[key] : "";
@@ -1942,62 +1941,30 @@ function extractJsonObject(text) {
   return JSON.parse(text.slice(first, last + 1));
 }
 
-function normalizeMailbox(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function mailboxScope() {
-  const sharedAccess = loadSharedAccessConfig();
-  const lookup = sharedAccess.email_intro_lookup;
-  if (!lookup || typeof lookup !== "object" || Array.isArray(lookup)) {
-    return [];
-  }
-  const raw = Array.isArray(lookup.allowedRecipientFilters) ? lookup.allowedRecipientFilters : [];
-  return raw.map(normalizeMailbox).filter(Boolean);
-}
-
-function recipientsWithinScope(reference, allowedFilters) {
-  if (!allowedFilters.length) {
-    return true;
-  }
-  const haystack = [
-    reference.sender,
-    reference.recipients,
-  ]
-    .filter((value) => typeof value === "string" && value.trim())
-    .join(" ")
-    .toLowerCase();
-  return allowedFilters.some((mailbox) => haystack.includes(mailbox));
-}
-
 function main() {
   const args = parseArgs(process.argv);
   const request = JSON.parse(fs.readFileSync(args["--request"], "utf8"));
-  const allowedFilters = mailboxScope();
-  const scopeText = allowedFilters.length
-    ? `Only use emails where sender or recipients include one of these mailboxes: ${allowedFilters.join(", ")}.`
-    : "No mailbox recipient filter is configured.";
   const prompt = [
-    "You are a scoped shared email lookup tool.",
-    "Use only the local user's email access and do not read unrelated sources.",
+    "You are a scoped, owner-approved email question answering tool.",
+    "Use only the local user's email access and only what is needed to answer the specific request.",
+    "Do not read unrelated sources and do not broaden the search beyond the specific question.",
     "Search only the last 1 year of email history.",
-    "Build context from that 1-year window on the requested subject.",
-    "Unless the requester explicitly asks otherwise, focus the summary on the most recent few relevant emails.",
-    "First identify the most relevant recent emails, then inspect attachments only if they are needed to extract company-specific details.",
+    "Build context from that 1-year window on the requested subject and question.",
+    "Unless the requester explicitly asks otherwise, focus on the most recent few relevant emails first.",
+    "First identify the most relevant recent emails, then inspect attachments only if they are needed to answer the specific question with evidence.",
     "Read at most 3 attachments total, and only the most important ones after you have enough context to choose them deliberately.",
-    scopeText,
     "Do not reveal raw email bodies, snippets, or raw attachment contents.",
     "Return strict JSON with exactly these keys:",
-    "summary_details, business_update, best_point_of_contact, references.",
-    "summary_details should explain why the selected emails and context were pulled, and what they say collectively.",
-    "business_update should summarize the latest company-specific product, commercial, traction, or metric updates that can be inferred from the recent relevant emails and, if needed, up to 3 carefully chosen attachments.",
-    "best_point_of_contact should identify who appears closest to the company based on the email evidence, usually the person forwarding updates or in the most frequent contact, and briefly explain why.",
+    "answer, supporting_context, why_these_emails, references.",
+    "answer should directly answer the requester's specific question. If the evidence is mixed or weak, say so explicitly.",
+    "supporting_context should summarize the most relevant supporting business, diligence, compliance, or relationship context from the emails and, if needed, up to 3 carefully chosen attachments.",
+    "why_these_emails should explain why the selected emails were chosen and why they are the strongest support for the answer.",
     "Each reference entry may only include: message_id, thread_id, subject, sender, recipients, date.",
     `Requester slack id: ${request.requester_slack_user_id || ""}`,
     `Purpose: ${request.purpose || ""}`,
     `Entity name: ${request.entity_name || ""}`,
     `Entity company: ${request.entity_company || ""}`,
-    "If the evidence is weak, say so explicitly.",
+    "Do not answer from general prior knowledge. Answer from the email evidence you find.",
   ].join("\n");
   const env = {
     ...process.env,
@@ -2027,11 +1994,9 @@ function main() {
   }
   const parsed = extractJsonObject(result.stdout);
   const references = Array.isArray(parsed.references) ? parsed.references : [];
-  parsed.references = references.filter((reference) => recipientsWithinScope(reference, allowedFilters));
-  if (allowedFilters.length && parsed.references.length === 0) {
-    throw new Error(
-      `lookup returned no references within allowed mailbox scope (${allowedFilters.join(", ")})`
-    );
+  parsed.references = references;
+  if (parsed.references.length === 0) {
+    throw new Error("lookup returned no supporting references");
   }
   fs.writeFileSync(args["--response"], JSON.stringify(parsed, null, 2) + "\n", "utf8");
 }

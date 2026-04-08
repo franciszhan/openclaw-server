@@ -12,7 +12,6 @@ from .models import ParsedRequest
 from .parser import (
     normalize_request_text,
     parse_public_request,
-    validate_lookup_request,
 )
 
 
@@ -79,8 +78,6 @@ class OpenAIIntentExtractor:
         api_key: str,
     ) -> ExtractedIntent:
         normalized = normalize_request_text(text)
-        lowered = normalized.lower()
-        validate_lookup_request(lowered)
         schema = {
             "name": "shared_email_lookup_intent",
             "schema": {
@@ -98,7 +95,7 @@ class OpenAIIntentExtractor:
             "strict": True,
         }
         instructions = (
-            "Extract intent for a strictly read-only shared email lookup. "
+            "Extract intent for a strictly read-only shared email question. "
             "entity_name should be the main company, founder, person, or topic the user wants looked up. "
             "entity_company should be null unless a clear company name is explicitly present."
         )

@@ -463,7 +463,7 @@ class SlackSocketModeRunner:
             _section_block(
                 "*Shared Email Request*\n"
                 f"<@{request['requester_slack_user_id']}> requested "
-                "a shared email lookup."
+                "a shared email question."
             ),
             {
                 "type": "section",
@@ -537,11 +537,11 @@ class SlackSocketModeRunner:
 def format_preview_text(record: RequestRecord) -> str:
     result = record.result or {}
     preview_lines = [
-        f"*Context summary*\n{result.get('summary_details', '')}",
+        f"*Answer*\n{result.get('answer', '')}",
         "",
-        f"*Business update*\n{result.get('business_update', '')}",
+        f"*Supporting context*\n{result.get('supporting_context', '')}",
         "",
-        f"*Best point of contact*\n{result.get('best_point_of_contact', '')}",
+        f"*Why these emails*\n{result.get('why_these_emails', '')}",
     ]
     references = result.get("references", [])
     if isinstance(references, list) and references:

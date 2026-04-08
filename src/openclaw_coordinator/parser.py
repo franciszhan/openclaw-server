@@ -6,31 +6,6 @@ from .models import ParsedRequest
 
 
 MENTION_PATTERN = re.compile(r"<@([A-Z0-9]+)>")
-LOOKUP_KEYWORDS = (
-    "lookup",
-    "look up",
-    "find",
-    "search",
-    "emails",
-    "email",
-    "introduce",
-    "intro",
-    "summarize",
-    "summary",
-    "latest info",
-    "latest information",
-    "latest context",
-    "latest update",
-    "latest on",
-    "recent context",
-    "recent update",
-    "what's the latest",
-    "whats the latest",
-    "what is the latest",
-    "what's new",
-    "whats new",
-    "what is new",
-)
 BLOCKED_SCOPE_PHRASES = (
     "all emails",
     "every email",
@@ -43,13 +18,15 @@ BLOCKED_SCOPE_PHRASES = (
 BLOCKED_EXPORT_PHRASES = (
     "forward me",
     "forward the email",
+    "forward the attachment",
     "send me the email",
+    "send me the attachment",
     "show me the raw email",
+    "show me the attachment",
     "paste the email",
     "verbatim",
     "full thread",
     "entire thread",
-    "attachment",
     "download",
     "export",
     "cc me",
@@ -86,15 +63,13 @@ def parse_public_request(
         allow_requester_as_owner=allow_requester_as_owner,
     )
     normalized = normalize_request_text(text)
-    validate_lookup_request(normalized.lower())
-
-    mode = "read_only"
     entity_name = _extract_entity_name(normalized)
+    validate_lookup_request(normalized.lower(), entity_name=entity_name)
     entity_company = _extract_entity_company(normalized)
     return ParsedRequest(
         owner_slack_user_id=owner_slack_user_id,
         action_type="email_intro_lookup",
-        mode=mode,
+        mode="read_only",
         entity_name=entity_name,
         entity_company=entity_company,
         purpose=normalized,
@@ -130,25 +105,29 @@ def normalize_request_text(text: str) -> str:
     return " ".join(text.strip().split())
 
 
-def validate_lookup_request(lowered: str) -> None:
-    if not any(keyword in lowered for keyword in LOOKUP_KEYWORDS):
-        raise ValueError("request must ask for a shared email lookup")
+def validate_lookup_request(lowered: str, *, entity_name: str | None = None) -> None:
     if any(phrase in lowered for phrase in BLOCKED_SCOPE_PHRASES):
-        raise ValueError("request is broader than the allowed shared email lookup scope")
+        raise ValueError("request is broader than the allowed scoped email lookup")
     if any(phrase in lowered for phrase in BLOCKED_EXPORT_PHRASES):
         raise ValueError("request asks for raw email content or forwarding, which is not allowed")
     if any(phrase in lowered for phrase in BLOCKED_SENSITIVE_PHRASES):
         raise ValueError("request appears to target sensitive or off-topic email content")
+    if entity_name and entity_name != "unspecified topic":
+        return
+    raise ValueError("request must ask a firm-relevant shared email question")
 
 
 def _extract_entity_name(text: str) -> str:
     patterns = [
-        r"introduce me to (?P<entity>.+?)(?: who | that | he | she | they | and summarize| and tell me| from email| in email|\?|$)",
-        r"(?:look up|lookup|find|search|summari[sz]e)\s+(?:emails?\s+)?(?:related to|about|for)\s+(?P<entity>.+?)(?: and summarize| and tell me| from email| in email|\?|$)",
-        r"(?:emails?\s+for|emails?\s+about|emails?\s+related to)\s+(?P<entity>.+?)(?: and summarize| and tell me|\?|$)",
+        r"(?:look up|lookup|find|search|summari[sz]e)\s+(?:emails?\s+)?(?:related to|about|for)\s+(?P<entity>.+?)(?: for me| and summarize| and tell me| from email| in email|\?|$)",
+        r"(?:emails?\s+for|emails?\s+about|emails?\s+related to)\s+(?P<entity>.+?)(?: for me| and summarize| and tell me|\?|$)",
         r"(?:latest|recent)\s+(?:info(?:rmation)?|context|update)\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
         r"(?:what(?:'s| is)?|whats)\s+(?:the\s+)?latest\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
         r"(?:what(?:'s| is)?|whats)\s+new\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
+        r"(?:did\s+(?:we|anyone)|have\s+we|has\s+anyone)\s+(?:pass on|passed on|decline|declined|flag|flagged|discuss|review|mention)\s+(?P<entity>.+?)(?:\?|$)",
+        r"(?:did\s+.+?\s+)(?:pass on|passed on|decline|declined|flag|flagged|discuss|review|mention)\s+(?P<entity>.+?)(?:\?|$)",
+        r"(?:who|when|why|whether|what(?:'s| is)?|whats)\s+.+?\s+(?:on|about|for)\s+(?P<entity>.+?)(?:\?|$)",
+        r"(?:who)\s+(?:passed on|declined|flagged|reviewed|mentioned)\s+(?P<entity>.+?)(?:\?|$)",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)

@@ -23,9 +23,9 @@ class FakeExecutor:
     def execute(self, owner: DirectoryEntry, request) -> dict[str, object]:
         self.calls.append((owner, request.to_dict()))
         return {
-            "summary_details": "Recent update emails and follow-up threads mention the company directly and provide current operating context.",
-            "business_update": "The business is ramping distribution and reporting stronger recent traction.",
-            "best_point_of_contact": "Boris appears closest because he is forwarding updates and is present on the densest thread activity.",
+            "answer": "The recent emails suggest the team likely passed on the company, though the evidence is somewhat indirect.",
+            "supporting_context": "A partner thread mentions passing, follow-up diligence concerns, and no recent re-engagement.",
+            "why_these_emails": "These were the newest threads directly discussing the decision and the reasoning behind it.",
             "references": [
                 {
                     "message_id": "msg-1",
@@ -42,10 +42,7 @@ class FailingExecutor:
         raise __import__("subprocess").CalledProcessError(
             1,
             ["openclaw-hostctl", "shared-access", "execute", owner.vm_user_id],
-            stderr=(
-                "lookup returned no references within allowed mailbox scope "
-                "(leads@tribecap.co, portfolio-passive@tribecap.co)"
-            ),
+            stderr="lookup returned no supporting references",
         )
 
 
@@ -245,8 +242,8 @@ class CoordinatorServiceTests(unittest.TestCase):
             decision="approve",
         )
         self.assertEqual(failed["request"]["status"], "failed")
-        self.assertIn("did not find relevant emails", failed["actions"][0]["text"])
-        self.assertIn("did not find relevant emails", failed["request"]["result_metadata"]["user_error"])
+        self.assertIn("did not find enough supporting emails", failed["actions"][0]["text"])
+        self.assertIn("did not find enough supporting emails", failed["request"]["result_metadata"]["user_error"])
 
     def test_owner_approve_then_publish(self) -> None:
         submit = self.service.submit_public_request(
@@ -273,7 +270,7 @@ class CoordinatorServiceTests(unittest.TestCase):
         )
         self.assertEqual(published["request"]["status"], "published")
         self.assertEqual(published["actions"][0]["kind"], "public_published")
-        self.assertIn("*Context summary*", published["actions"][0]["text"])
+        self.assertIn("*Answer*", published["actions"][0]["text"])
         self.assertIn("*References*", published["actions"][0]["text"])
         self.assertEqual(len(self.executor.calls), 1)
 
@@ -333,10 +330,22 @@ class ParserSafetyTests(unittest.TestCase):
                 "entity": "Ramp",
             },
             {
+                "name": "pass decision ask",
+                "text": "<@UCOORD> did <@UOWNER> pass on Databento?",
+                "allowed": True,
+                "entity": "Databento",
+            },
+            {
+                "name": "compliance concern ask",
+                "text": "<@UCOORD> can <@UOWNER> tell me who flagged compliance concerns on Ramp?",
+                "allowed": True,
+                "entity": "Ramp",
+            },
+            {
                 "name": "broad mailbox ask",
                 "text": "<@UCOORD> can <@UOWNER> show me all emails about crypto deals?",
                 "allowed": False,
-                "error": "broader than the allowed shared email lookup scope",
+                "error": "broader than the allowed scoped email lookup",
             },
             {
                 "name": "raw email ask",
@@ -392,7 +401,7 @@ class ParserSafetyTests(unittest.TestCase):
                 "name": "not a lookup",
                 "text": "<@UCOORD> can <@UOWNER> help me think about IC prep?",
                 "allowed": False,
-                "error": "must ask for a shared email lookup",
+                "error": "must ask a firm-relevant shared email question",
             },
         ]
 

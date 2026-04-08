@@ -144,7 +144,7 @@ class CoordinatorService:
                 thread_ts=record.public_thread_ts,
                 text=(
                     f"Request `{record.request_id}` queued for {owner.display_name}'s approval "
-                    "for a shared email lookup."
+                    "for a shared email request."
                 ),
             ),
             CoordinatorAction(
@@ -152,7 +152,7 @@ class CoordinatorService:
                 request_id=record.request_id,
                 slack_user_id=owner.slack_user_id,
                 text=(
-                    f"{requester.display_name} requested a shared email lookup for "
+                    f"{requester.display_name} requested a shared email question for "
                     f"`{record.entity_name}`.\n\n"
                     f"Request ID: `{record.request_id}`\n"
                     f"Reply with `approve {record.request_id}` or `reject {record.request_id}`."
@@ -339,11 +339,11 @@ def format_public_result(record: RequestRecord) -> str:
     lines = [
         f"Request `{record.request_id}` completed for `{record.entity_name}`.",
         "",
-        f"*Context summary*\n{result.get('summary_details', '')}",
+        f"*Answer*\n{result.get('answer', '')}",
         "",
-        f"*Business update*\n{result.get('business_update', '')}",
+        f"*Supporting context*\n{result.get('supporting_context', '')}",
         "",
-        f"*Best point of contact*\n{result.get('best_point_of_contact', '')}",
+        f"*Why these emails*\n{result.get('why_these_emails', '')}",
     ]
     references = result.get("references", [])
     if references:
@@ -361,11 +361,11 @@ def format_public_result(record: RequestRecord) -> str:
 def format_preview_result(record: RequestRecord) -> str:
     result = record.result or {}
     lines = [
-        f"*Context summary*\n{result.get('summary_details', '')}",
+        f"*Answer*\n{result.get('answer', '')}",
         "",
-        f"*Business update*\n{result.get('business_update', '')}",
+        f"*Supporting context*\n{result.get('supporting_context', '')}",
         "",
-        f"*Best point of contact*\n{result.get('best_point_of_contact', '')}",
+        f"*Why these emails*\n{result.get('why_these_emails', '')}",
     ]
     references = result.get("references", [])
     if references:
@@ -382,14 +382,13 @@ def format_preview_result(record: RequestRecord) -> str:
 
 def classify_execution_failure(failure_reason: str) -> str:
     lowered = failure_reason.lower()
-    if "lookup returned no references within allowed mailbox scope" in lowered:
+    if "lookup returned no supporting references" in lowered:
         return (
-            "The shared lookup completed, but it did not find relevant emails within the "
-            "currently allowed shared mailboxes for that topic."
+            "The shared email request completed, but it did not find enough supporting emails to answer confidently."
         )
     if "timed out" in lowered:
-        return "The shared lookup took too long and timed out before producing a result."
-    return "The scoped shared-access lookup failed before publication."
+        return "The shared email request took too long and timed out before producing a result."
+    return "The scoped shared email request failed before publication."
 
 
 def extract_failure_text(error: Exception) -> str:

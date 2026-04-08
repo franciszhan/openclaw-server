@@ -52,6 +52,7 @@ def example_config(storage_root: Path) -> HostConfig:
         automation_ssh_public_key_path=storage_root / "automation_guest_key.pub",
         shared_skills_dir=None,
         loop_mount_base=storage_root / "mnt",
+        google_oauth_broker_root=storage_root / "google-oauth-broker",
     )
 
 
@@ -120,6 +121,7 @@ class HostControllerTests(unittest.TestCase):
             self.assertIn("drive.readonly", url)
             self.assertIn("spreadsheets.readonly", url)
             self.assertIn("documents.readonly", url)
+            self.assertIn("presentations.readonly", url)
 
     def test_google_oauth_wrappers_use_host_side_broker(self) -> None:
         status_script = render_google_auth_status_wrapper(
@@ -187,13 +189,15 @@ class HostControllerTests(unittest.TestCase):
     def test_lookup_script_scopes_time_window_and_recent_focus(self) -> None:
         script = render_email_intro_lookup_script()
         self.assertIn("Search only the last 1 year of email history.", script)
-        self.assertIn("Build context from that 1-year window on the requested subject.", script)
+        self.assertIn("Build context from that 1-year window on the requested subject and question.", script)
         self.assertIn(
-            "Unless the requester explicitly asks otherwise, focus the summary on the most recent few relevant emails.",
+            "Unless the requester explicitly asks otherwise, focus on the most recent few relevant emails first.",
             script,
         )
         self.assertIn("Read at most 3 attachments total", script)
         self.assertIn("raw attachment contents", script)
+        self.assertIn("answer, supporting_context, why_these_emails, references.", script)
+        self.assertIn("lookup returned no supporting references", script)
         self.assertIn('"low"', script)
 
     def test_company_agents_addendum_appends_without_replacing_existing_agents_md(self) -> None:
@@ -302,18 +306,18 @@ class HostControllerTests(unittest.TestCase):
             storage_root = Path(tmp_dir)
             config = example_config(storage_root)
             controller = HostController(config)
-            valid_user_dir = config.vm_root / "alice"
+            valid_user_dir = config.vm_root / "francis"
             valid_user_dir.mkdir(parents=True, exist_ok=True)
             save_user_record(
                 valid_user_dir / "vm.json",
                 UserRecord(
-                    user_id="alice",
-                    display_name="Alice",
-                    machine_name="openclaw-alice",
+                    user_id="francis",
+                    display_name="Francis",
+                    machine_name="openclaw-francis",
                     ip_address="172.31.0.10",
                     mac_address="06:00:ac:1f:00:0a",
-                    tap_name="ocalice",
-                    rootfs_path=str(config.storage_root / "alice/rootfs.ext4"),
+                    tap_name="ocfrancis",
+                    rootfs_path=str(config.storage_root / "francis/rootfs.ext4"),
                     created_at="2026-01-01T00:00:00Z",
                 ),
             )
@@ -323,25 +327,54 @@ class HostControllerTests(unittest.TestCase):
             state_root = broker_root / "state"
             keys_dir.mkdir(parents=True, exist_ok=True)
             ssh_dir.mkdir(parents=True, exist_ok=True)
-            (state_root / "bob").mkdir(parents=True, exist_ok=True)
-            (keys_dir / "alice_vm_ed25519").write_text("alice-private", encoding="utf-8")
-            (keys_dir / "alice_vm_ed25519.pub").write_text("ssh-ed25519 ALICE alice", encoding="utf-8")
-            (keys_dir / "bob_vm_ed25519").write_text("bob-private", encoding="utf-8")
-            (keys_dir / "bob_vm_ed25519.pub").write_text("ssh-ed25519 BOB bob", encoding="utf-8")
+            (state_root / "orphaneduser").mkdir(parents=True, exist_ok=True)
+            (keys_dir / "francis_vm_ed25519").write_text("francis-private", encoding="utf-8")
+            (keys_dir / "francis_vm_ed25519.pub").write_text(
+                "ssh-ed25519 FRANCIS francis",
+                encoding="utf-8",
+            )
+            (keys_dir / "orphaneduser_vm_ed25519").write_text(
+                "orphaned-private",
+                encoding="utf-8",
+            )
+            (keys_dir / "orphaneduser_vm_ed25519.pub").write_text(
+                "ssh-ed25519 ORPHAN orphaneduser",
+                encoding="utf-8",
+            )
             with mock.patch.object(
                 HostController,
                 "_google_oauth_broker_root",
                 return_value=broker_root,
             ), mock.patch.object(HostController, "_chown_google_oauth_broker_path"):
                 controller._refresh_google_oauth_broker_authorized_keys()
-            self.assertTrue((keys_dir / "alice_vm_ed25519").exists())
-            self.assertTrue((keys_dir / "alice_vm_ed25519.pub").exists())
-            self.assertFalse((keys_dir / "bob_vm_ed25519").exists())
-            self.assertFalse((keys_dir / "bob_vm_ed25519.pub").exists())
-            self.assertFalse((state_root / "bob").exists())
+            self.assertTrue((keys_dir / "francis_vm_ed25519").exists())
+            self.assertTrue((keys_dir / "francis_vm_ed25519.pub").exists())
+            self.assertFalse((keys_dir / "orphaneduser_vm_ed25519").exists())
+            self.assertFalse((keys_dir / "orphaneduser_vm_ed25519.pub").exists())
+            self.assertFalse((state_root / "orphaneduser").exists())
             authorized_keys = (ssh_dir / "authorized_keys").read_text(encoding="utf-8")
-            self.assertIn("openclaw-hostctl google-auth broker alice", authorized_keys)
-            self.assertNotIn("openclaw-hostctl google-auth broker bob", authorized_keys)
+            self.assertIn("openclaw-hostctl google-auth broker francis", authorized_keys)
+            self.assertNotIn("openclaw-hostctl google-auth broker orphaneduser", authorized_keys)
+
+    def test_ensure_google_oauth_broker_directories_does_not_refresh_authorized_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            controller = HostController(config)
+            broker_root = storage_root / "google-oauth-broker"
+            with mock.patch.object(
+                HostController,
+                "_google_oauth_broker_root",
+                return_value=broker_root,
+            ), mock.patch.object(
+                HostController, "_chown_google_oauth_broker_path"
+            ), mock.patch.object(
+                HostController, "_write_google_oauth_broker_sudoers"
+            ), mock.patch.object(
+                HostController, "_refresh_google_oauth_broker_authorized_keys"
+            ) as refresh_authorized_keys:
+                controller._ensure_google_oauth_broker_directories()
+            refresh_authorized_keys.assert_not_called()
 
     def test_refresh_google_oauth_broker_authorized_keys_reconciles_missing_active_user_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -27,6 +27,7 @@ class HostConfig:
     automation_ssh_public_key_path: Path | None
     shared_skills_dir: Path | None
     loop_mount_base: Path
+    google_oauth_broker_root: Path
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "HostConfig":
@@ -58,6 +59,9 @@ class HostConfig:
             ),
             shared_skills_dir=Path(data["shared_skills_dir"]) if data.get("shared_skills_dir") else None,
             loop_mount_base=Path(data["loop_mount_base"]),
+            google_oauth_broker_root=Path(
+                data.get("google_oauth_broker_root", "/var/lib/openclaw/google-oauth-broker")
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:

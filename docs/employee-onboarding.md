@@ -6,7 +6,7 @@ This is the minimum information to collect before provisioning a new employee VM
 
 - Full name
 - Short user ID
-  Example: `alice`, `sam-lee`
+  Example: `sam-lee`
 - Work email
 - Slack user ID
 - Timezone
@@ -48,25 +48,18 @@ Create one per-user manifest JSON file like:
 
 ```json
 {
-  "user_id": "alice",
+  "user_id": "example-user",
   "slack_user_id": "U12345678",
   "profile": "default",
-  "email": "alice@example.com",
+  "email": "user@example.com",
   "timezone": "America/Toronto",
-  "git_username": "alice-example",
+  "git_username": "example-user",
   "shared_access": {
     "opt_in": true,
     "capabilities": [
       "email_intro_lookup"
     ],
     "email_intro_lookup": {
-      "allowedRecipientFilters": [
-        "leads@tribecap.co",
-        "portfolio-passive@tribecap.co",
-        "portfolio-active@tribecap.co",
-        "crypto-passive@tribecap.co",
-        "crypto@tribecap.co"
-      ],
       "command": [
         "/usr/local/bin/company-email-intro-lookup",
         "--request",
@@ -103,9 +96,9 @@ Create one per-user manifest JSON file like:
 Then provision:
 
 ```bash
-sudo openclaw-hostctl provision alice \
-  --display-name "Alice Example" \
-  --user-config /srv/openclaw/user-configs/alice.json
+sudo openclaw-hostctl provision example-user \
+  --display-name "Example User" \
+  --user-config /srv/openclaw/user-configs/example-user.json
 ```
 
 The host stores the full manifest under the VM directory, but the guest-facing `/etc/openclaw/config.json` only gets the non-OpenClaw metadata fields. The `openclaw` section is reserved for the activation step.
@@ -119,8 +112,8 @@ Reuse the same manifest file for activation.
 Activate the user with:
 
 ```bash
-sudo openclaw-hostctl activate-user alice \
-  --manifest /srv/openclaw/user-configs/alice.json \
+sudo openclaw-hostctl activate-user example-user \
+  --manifest /srv/openclaw/user-configs/example-user.json \
   --restart
 ```
 
@@ -156,7 +149,7 @@ Expected employee flow:
 1. Ask OpenClaw to connect Google.
 2. The agent should run `google-auth-status`.
 3. If not connected, it should run `connect-google` and return the consent URL.
-4. The employee opens the URL, approves readonly Gmail + Calendar + Drive + Sheets + Docs access, and pastes the localhost callback URL back.
+4. The employee opens the URL, approves readonly Gmail + Calendar + Drive + Sheets + Docs + Slides access, and pastes the localhost callback URL back.
 5. The agent runs `finish-google "<callback_url>"`.
 6. The agent runs `google-auth-status` again to confirm the connection.
 

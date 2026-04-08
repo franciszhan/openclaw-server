@@ -359,13 +359,7 @@ The coordinator should use this path only for typed lookup operations like:
 
 - `email_intro_lookup`
 
-If the per-user `shared_access` config does not override the command array, `email_intro_lookup` defaults to the built-in `company-email-intro-lookup` wrapper, which calls `openclaw agent --local` inside the owner VM and scopes the lookup to allowed mailbox filters such as:
-
-- `leads@tribecap.co`
-- `portfolio-passive@tribecap.co`
-- `portfolio-active@tribecap.co`
-- `crypto-passive@tribecap.co`
-- `crypto@tribecap.co`
+If the per-user `shared_access` config does not override the command array, `email_intro_lookup` defaults to the built-in `company-email-intro-lookup` wrapper, which calls `openclaw agent --local` inside the owner VM and answers the specific request from the owner's email evidence within the default 1-year time window.
 
 Do not use it to forward arbitrary prompts into another employee's general OpenClaw agent.
 
