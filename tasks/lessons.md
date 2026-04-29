@@ -9,4 +9,4 @@
 - Shared email lookup helpers must preflight local OpenClaw gateway `operator.admin` pairing; gateway pairing failures are operational access failures, not empty email-search results.
 - Shared email lookup helpers must run each request in a fresh per-request OpenClaw session; reusing a persistent agent session can contaminate future lookups with prior failures.
 - Host-side Google auth status must refresh expired guest access tokens before reporting a VM as connected for shared email lookup.
-- Google access tokens are short-lived; shared Gmail auth needs both lookup-time refresh and a proactive refresh-all timer so connected users do not fail because an access token aged out.
+- Google access tokens are short-lived; shared Gmail auth should refresh automatically at lookup time so connected users do not fail because an access token aged out.

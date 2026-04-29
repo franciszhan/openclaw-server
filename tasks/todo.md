@@ -167,6 +167,13 @@
 
 - [x] Confirm Google access-token and refresh-token expiry behavior from official docs.
 - [x] Add explicit `google-auth refresh` and `google-auth refresh-all` hostctl commands.
-- [x] Add a host systemd timer for proactive connected-user token refresh.
-- [ ] Deploy the timer on prod and verify a refresh sweep succeeds.
-- [ ] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.
+- [x] Keep refresh automatic at lookup time rather than adding a recurring timer.
+- [x] Disable and remove the temporary prod refresh timer.
+- [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.
+
+## Google Auth Automatic Refresh Review
+
+- Google access tokens expire quickly; connected owner tokens are now refreshed at lookup/status time before shared email execution.
+- `google-auth refresh` and `google-auth refresh-all` are available as explicit operator commands, but no recurring background timer is installed.
+- The temporary prod timer was disabled and removed after the scope change.
+- Verified locally with targeted tests, `make test`, `PYTHONPATH=src python3 -m compileall src tests`, `make validate`, and `git diff --check`.

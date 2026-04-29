@@ -370,13 +370,6 @@ sudo openclaw-hostctl google-auth refresh alice
 sudo openclaw-hostctl google-auth refresh-all
 ```
 
-Enable the background refresh timer on production hosts so connected users stay warm without waiting for a lookup preflight:
-
-```bash
-sudo systemctl enable --now openclaw-google-auth-refresh.timer
-sudo systemctl list-timers openclaw-google-auth-refresh.timer
-```
-
 ## Start, Stop, And Inspect
 
 ```bash

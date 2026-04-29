@@ -62,8 +62,6 @@ install -m 0755 "${INSTALL_ROOT}/bootstrap/render-lockdown-config.sh" /usr/local
 install -m 0644 "${INSTALL_ROOT}/bootstrap/nftables-openclaw.nft.tpl" /usr/local/lib/openclaw/nftables-openclaw.nft.tpl
 install -m 0644 "${INSTALL_ROOT}/systemd/openclaw-vm@.service" /etc/systemd/system/openclaw-vm@.service
 install -m 0644 "${INSTALL_ROOT}/systemd/openclaw-coordinator.service" /etc/systemd/system/openclaw-coordinator.service
-install -m 0644 "${INSTALL_ROOT}/systemd/openclaw-google-auth-refresh.service" /etc/systemd/system/openclaw-google-auth-refresh.service
-install -m 0644 "${INSTALL_ROOT}/systemd/openclaw-google-auth-refresh.timer" /etc/systemd/system/openclaw-google-auth-refresh.timer
 install -m 0644 "${INSTALL_ROOT}/bootstrap/openclaw-network.service" /etc/systemd/system/openclaw-network.service
 install -m 0755 "${INSTALL_ROOT}/bootstrap/apply-lockdown.sh" /usr/local/lib/openclaw/apply-lockdown.sh
 install -m 0644 "${INSTALL_ROOT}/bootstrap/sshd-hardening.conf" "${LOCKDOWN_CANDIDATE_DIR}/10-openclaw-hardening.conf"
