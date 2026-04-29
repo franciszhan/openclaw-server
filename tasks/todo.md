@@ -177,3 +177,11 @@
 - `google-auth refresh` and `google-auth refresh-all` are available as explicit operator commands, but no recurring background timer is installed.
 - The temporary prod timer was disabled and removed after the scope change.
 - Verified locally with targeted tests, `make test`, `PYTHONPATH=src python3 -m compileall src tests`, `make validate`, and `git diff --check`.
+
+## Direct Email Prompt Auth Refresh
+
+- [x] Update VM agent instructions so direct Gmail/email prompts run `google-auth-status` before using Google Workspace data.
+- [x] Make the company AGENTS addendum refresh replace stale instructions instead of leaving old addenda in place.
+- [ ] Push the updated addendum to existing prod VMs.
+- [x] Verify locally with targeted tests, full tests, compile checks, config validation, and whitespace checks.
+- [ ] Verify on prod.

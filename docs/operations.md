@@ -370,6 +370,8 @@ sudo openclaw-hostctl google-auth refresh alice
 sudo openclaw-hostctl google-auth refresh-all
 ```
 
+Inside each VM, `google-auth-status` uses the same refresh path. Agent instructions require running it before direct Gmail/email/inbox or Google Workspace work, so normal user prompts refresh on demand too.
+
 ## Start, Stop, And Inspect
 
 ```bash

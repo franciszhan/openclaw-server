@@ -1710,12 +1710,36 @@ def ensure_company_agents_addendum(mount_dir: Path) -> None:
 
 def append_company_agents_addendum(agents_path: Path) -> bool:
     existing = agents_path.read_text(encoding="utf-8")
-    if COMPANY_AGENTS_ADDENDUM_MARKER in existing:
-        return False
     addendum = render_company_agents_addendum()
+    if COMPANY_AGENTS_ADDENDUM_MARKER in existing:
+        start = existing.index(COMPANY_AGENTS_ADDENDUM_MARKER)
+        prefix = existing[:start].rstrip()
+        replacement = prefix + ("\n\n" if prefix else "") + addendum
+        if replacement == existing:
+            return False
+        agents_path.write_text(replacement, encoding="utf-8")
+        return True
     separator = "\n\n" if existing and not existing.endswith("\n\n") else ""
     agents_path.write_text(existing + separator + addendum, encoding="utf-8")
     return True
+
+
+def render_company_agents_addendum() -> str:
+    return f"""{COMPANY_AGENTS_ADDENDUM_MARKER}
+
+## Company Addendum
+
+- Company skills are installed at `/opt/openclaw/skills/company`.
+- Before saying a workflow or helper is unavailable, check the company skills relevant to the request.
+- For Google Workspace auth, use the existing helper commands on the VM:
+  - `google-auth-status`
+  - `connect-google`
+  - `finish-google "<callback_url>"`
+- Before using Gmail, email, inbox, Calendar, Drive, Sheets, Docs, or Slides data for any user prompt, run `google-auth-status` in the VM. It refreshes an expired Google access token automatically before returning `connected: true`.
+- If `google-auth-status` returns `connected: false`, run `connect-google`, ask the user to complete the browser consent flow, then run `finish-google "<callback_url>"`.
+- Do this for direct user requests and coordinator/shared email requests; do not wait for a failed email lookup before refreshing auth.
+- If the user explicitly asks you to run one of these commands, execute it and return the relevant output.
+"""
 
 
 def ensure_company_agents_addendum_runtime(mount_dir: Path) -> None:
@@ -1739,22 +1763,6 @@ def ensure_company_agents_addendum_runtime(mount_dir: Path) -> None:
     wants_link = wants_dir / "openclaw-company-agents-refresh.path"
     wants_link.unlink(missing_ok=True)
     os.symlink("/etc/systemd/system/openclaw-company-agents-refresh.path", wants_link)
-
-
-def render_company_agents_addendum() -> str:
-    return f"""{COMPANY_AGENTS_ADDENDUM_MARKER}
-
-## Company Addendum
-
-- Company skills are installed at `/opt/openclaw/skills/company`.
-- Before saying a workflow or helper is unavailable, check the company skills relevant to the request.
-- For Google Workspace auth, use the existing helper commands on the VM:
-  - `google-auth-status`
-  - `connect-google`
-  - `finish-google "<callback_url>"`
-- If the user asks to connect Gmail, Calendar, email, inbox, or schedule access, prefer these helper commands over abstract setup advice.
-- If the user explicitly asks you to run one of these commands, execute it and return the relevant output.
-"""
 
 
 def render_company_agents_refresh_service() -> str:
@@ -1795,7 +1803,13 @@ if not AGENTS_PATH.exists():
     raise SystemExit(0)
 
 content = AGENTS_PATH.read_text(encoding="utf-8")
-if MARKER not in content:
+if MARKER in content:
+    start = content.index(MARKER)
+    prefix = content[:start].rstrip()
+    replacement = prefix + ("\\n\\n" if prefix else "") + ADDENDUM
+    if replacement != content:
+        AGENTS_PATH.write_text(replacement, encoding="utf-8")
+else:
     separator = "\\n\\n" if content and not content.endswith("\\n\\n") else ""
     AGENTS_PATH.write_text(content + separator + ADDENDUM, encoding="utf-8")
 

@@ -153,6 +153,8 @@ Expected employee flow:
 5. The agent runs `finish-google "<callback_url>"`.
 6. The agent runs `google-auth-status` again to confirm the connection.
 
+The agent should also run `google-auth-status` immediately before using Gmail, email, inbox, Calendar, Drive, Sheets, Docs, or Slides data for a normal user prompt. That status helper refreshes an expired Google access token before returning `connected: true`, so direct email questions and coordinator shared-email lookups use the same on-demand refresh path.
+
 This does not copy the shared Google OAuth client secret into each VM. The shared client stays on the host, each VM gets only the helper commands, and each employee still authenticates their own Google account so only their token ends up in their own VM.
 
 ## Post-Activation Check

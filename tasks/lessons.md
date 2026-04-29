@@ -10,3 +10,4 @@
 - Shared email lookup helpers must run each request in a fresh per-request OpenClaw session; reusing a persistent agent session can contaminate future lookups with prior failures.
 - Host-side Google auth status must refresh expired guest access tokens before reporting a VM as connected for shared email lookup.
 - Google access tokens are short-lived; shared Gmail auth should refresh automatically at lookup time so connected users do not fail because an access token aged out.
+- Direct user prompts that need Gmail/email data must also run the same Google auth status helper before access; coordinator-only refresh is not enough.

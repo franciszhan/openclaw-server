@@ -217,6 +217,8 @@ class HostControllerTests(unittest.TestCase):
             self.assertIn("## Company Addendum", content)
             self.assertIn("/opt/openclaw/skills/company", content)
             self.assertIn("connect-google", content)
+            self.assertIn("Before using Gmail, email, inbox", content)
+            self.assertIn("refreshes an expired Google access token automatically", content)
 
     def test_company_agents_addendum_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -242,6 +244,22 @@ class HostControllerTests(unittest.TestCase):
             )
             self.assertFalse(append_company_agents_addendum(agents_path))
 
+    def test_append_company_agents_addendum_updates_stale_existing_addendum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            agents_path = Path(tmp_dir) / "AGENTS.md"
+            agents_path.write_text(
+                "# AGENTS.md\n\n"
+                "<!-- OPENCLAW COMPANY ADDENDUM -->\n\n"
+                "## Company Addendum\n\n"
+                "- stale instruction\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(append_company_agents_addendum(agents_path))
+            content = agents_path.read_text(encoding="utf-8")
+            self.assertNotIn("stale instruction", content)
+            self.assertIn("Before using Gmail, email, inbox", content)
+            self.assertEqual(content.count("## Company Addendum"), 1)
+
     def test_company_agents_runtime_installs_path_based_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             mount_dir = Path(tmp_dir) / "mount"
@@ -264,6 +282,7 @@ class HostControllerTests(unittest.TestCase):
             self.assertIn("PathExists=/home/admin/.openclaw/workspace/AGENTS.md", render_company_agents_refresh_path())
             self.assertIn("openclaw-company-agents-refresh.sh", render_company_agents_refresh_service())
             self.assertIn("OPENCLAW COMPANY ADDENDUM", render_company_agents_refresh_script())
+            self.assertIn("if MARKER in content", render_company_agents_refresh_script())
 
     def test_validate_user_manifest_rejects_missing_slack_tokens(self) -> None:
         with self.assertRaisesRegex(ValueError, "botToken is required"):
