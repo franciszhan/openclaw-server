@@ -363,6 +363,20 @@ If the per-user `shared_access` config does not override the command array, `ema
 
 Do not use it to forward arbitrary prompts into another employee's general OpenClaw agent.
 
+Google OAuth access tokens are short-lived. The host relay refreshes an expired or nearly expired owner token before shared email lookup, and operators can run the same path directly:
+
+```bash
+sudo openclaw-hostctl google-auth refresh alice
+sudo openclaw-hostctl google-auth refresh-all
+```
+
+Enable the background refresh timer on production hosts so connected users stay warm without waiting for a lookup preflight:
+
+```bash
+sudo systemctl enable --now openclaw-google-auth-refresh.timer
+sudo systemctl list-timers openclaw-google-auth-refresh.timer
+```
+
 ## Start, Stop, And Inspect
 
 ```bash

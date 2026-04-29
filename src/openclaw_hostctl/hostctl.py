@@ -35,6 +35,7 @@ DEFAULT_GOOGLE_OAUTH_CLIENT_PATH = Path("/etc/openclaw/google-oauth-client.json"
 DEFAULT_HOST_SSH_ED25519_PUBLIC_KEY_PATH = Path("/etc/ssh/ssh_host_ed25519_key.pub")
 DEFAULT_GOOGLE_OAUTH_BROKER_SUDOERS_PATH = Path("/etc/sudoers.d/openclaw-google-oauth-broker")
 GOOGLE_OAUTH_BROKER_USER = "openclaw-google-broker"
+GOOGLE_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 15 * 60
 COMPANY_AGENTS_ADDENDUM_MARKER = "<!-- OPENCLAW COMPANY ADDENDUM -->"
 
 
@@ -1024,19 +1025,25 @@ if (!hasAdmin) {
             "scopes": str(token_payload["scope"]).split(),
         }
 
-    def google_auth_status(self, user_id: str) -> dict[str, object]:
+    def google_auth_status(self, user_id: str, *, force_refresh: bool = False) -> dict[str, object]:
         require_root()
         user = self._load_user(user_id)
         result = {
             "oauth_client_configured": DEFAULT_GOOGLE_OAUTH_CLIENT_PATH.exists(),
             "connected": False,
+            "has_refresh_token": False,
+            "refreshed": False,
             "scopes": [],
             "next_step": None,
         }
         token = self._read_guest_google_token(user)
         if token:
             try:
-                token = self._refresh_guest_google_token_if_needed(user, token)
+                token, refreshed = self._refresh_guest_google_token_if_needed(
+                    user,
+                    token,
+                    force=force_refresh,
+                )
             except Exception as error:
                 result["next_step"] = (
                     f"Google auth token refresh failed: {error}. "
@@ -1045,7 +1052,10 @@ if (!hasAdmin) {
                 )
                 return result
             scope = str(token.get("scope", ""))
+            refresh_token = token.get("refresh_token")
             result["connected"] = True
+            result["has_refresh_token"] = isinstance(refresh_token, str) and bool(refresh_token.strip())
+            result["refreshed"] = refreshed
             result["scopes"] = [value for value in scope.split() if value]
             return result
         result["next_step"] = (
@@ -1053,6 +1063,33 @@ if (!hasAdmin) {
             '`finish-google "<callback_url>"`.'
         )
         return result
+
+    def google_auth_refresh(self, user_id: str, *, force: bool = False) -> dict[str, object]:
+        return self.google_auth_status(user_id, force_refresh=force)
+
+    def google_auth_refresh_all(self, *, force: bool = False) -> list[dict[str, object]]:
+        require_root()
+        rows: list[dict[str, object]] = []
+        for user in self.list_users():
+            row: dict[str, object] = {
+                "user_id": user.user_id,
+                "display_name": user.display_name,
+            }
+            try:
+                status = self.google_auth_refresh(user.user_id, force=force)
+            except Exception as error:
+                status = {
+                    "oauth_client_configured": DEFAULT_GOOGLE_OAUTH_CLIENT_PATH.exists(),
+                    "connected": False,
+                    "has_refresh_token": False,
+                    "refreshed": False,
+                    "scopes": [],
+                    "next_step": None,
+                    "error": str(error),
+                }
+            row.update(status)
+            rows.append(row)
+        return rows
 
     def google_auth_broker(self, user_id: str, original_command: str) -> int:
         parts = shlex.split(original_command.strip())
@@ -1143,23 +1180,30 @@ if (!hasAdmin) {
         self,
         user: UserRecord,
         token: dict[str, object],
-    ) -> dict[str, object]:
+        *,
+        force: bool = False,
+    ) -> tuple[dict[str, object], bool]:
         obtained_at_raw = token.get("obtainedAt")
         expires_in_raw = token.get("expires_in")
         refresh_token = token.get("refresh_token")
         if not isinstance(refresh_token, str) or not refresh_token.strip():
-            return token
-        if not isinstance(obtained_at_raw, str):
+            return token, False
+        if force:
+            needs_refresh = True
+        elif not isinstance(obtained_at_raw, str):
             needs_refresh = True
         else:
             try:
                 obtained_at = datetime.fromisoformat(obtained_at_raw.replace("Z", "+00:00"))
                 expires_in = int(expires_in_raw) if expires_in_raw is not None else 0
-                needs_refresh = datetime.now(UTC).timestamp() >= obtained_at.timestamp() + expires_in - 300
+                needs_refresh = (
+                    datetime.now(UTC).timestamp()
+                    >= obtained_at.timestamp() + expires_in - GOOGLE_ACCESS_TOKEN_REFRESH_SKEW_SECONDS
+                )
             except (TypeError, ValueError):
                 needs_refresh = True
         if not needs_refresh:
-            return token
+            return token, False
 
         client = load_google_oauth_client()
         token_request = Request(
@@ -1185,7 +1229,7 @@ if (!hasAdmin) {
             "obtainedAt": timestamp_now(),
         }
         self._write_guest_google_token(user, token_payload)
-        return token_payload
+        return token_payload, True
 
 
 def render_guest_network(config: HostConfig, guest_ip: str, guest_mac: str) -> str:

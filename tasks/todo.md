@@ -162,3 +162,11 @@
 - [x] Ensure guest email lookups use a fresh per-request OpenClaw session id instead of reusing contaminated main-agent history.
 - [x] Refresh expired guest Gmail access tokens from the host broker before shared email execution.
 - [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.
+
+## Google Auth Automatic Refresh
+
+- [x] Confirm Google access-token and refresh-token expiry behavior from official docs.
+- [x] Add explicit `google-auth refresh` and `google-auth refresh-all` hostctl commands.
+- [x] Add a host systemd timer for proactive connected-user token refresh.
+- [ ] Deploy the timer on prod and verify a refresh sweep succeeds.
+- [ ] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.

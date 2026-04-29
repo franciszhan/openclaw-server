@@ -1084,10 +1084,104 @@ class HostControllerTests(unittest.TestCase):
                 status = controller.google_auth_status("jon")
 
             self.assertTrue(status["connected"])
+            self.assertTrue(status["has_refresh_token"])
+            self.assertTrue(status["refreshed"])
             self.assertEqual(status["scopes"], ["https://www.googleapis.com/auth/gmail.readonly"])
             written_token = write_token.call_args.args[1]
             self.assertEqual(written_token["access_token"], "new-access-token")
             self.assertEqual(written_token["refresh_token"], "refresh-token")
+
+    def test_google_auth_status_skips_fresh_guest_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            config.user_dir("jon").mkdir(parents=True, exist_ok=True)
+            save_user_record(
+                config.user_record_path("jon"),
+                UserRecord(
+                    user_id="jon",
+                    display_name="Jon",
+                    machine_name="openclaw-jon",
+                    ip_address="172.31.0.17",
+                    mac_address="06:00:ac:1f:00:11",
+                    tap_name="ocjon",
+                    rootfs_path=str(config.user_rootfs_path("jon")),
+                    created_at="2026-03-10T00:00:00Z",
+                ),
+            )
+            controller = HostController(config)
+            fresh_token = {
+                "access_token": "fresh-access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 3600,
+                "scope": "https://www.googleapis.com/auth/gmail.readonly",
+                "obtainedAt": "2999-01-01T00:00:00Z",
+            }
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch.object(controller, "_read_guest_google_token", return_value=fresh_token),
+                mock.patch.object(controller, "_write_guest_google_token") as write_token,
+                mock.patch("openclaw_hostctl.hostctl.urlopen") as urlopen,
+            ):
+                status = controller.google_auth_status("jon")
+
+            self.assertTrue(status["connected"])
+            self.assertTrue(status["has_refresh_token"])
+            self.assertFalse(status["refreshed"])
+            self.assertEqual(status["scopes"], ["https://www.googleapis.com/auth/gmail.readonly"])
+            write_token.assert_not_called()
+            urlopen.assert_not_called()
+
+    def test_google_auth_refresh_all_reports_each_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            for user_id, display_name, host_offset in (
+                ("amy", "Amy", "0a"),
+                ("zoe", "Zoe", "0b"),
+            ):
+                config.user_dir(user_id).mkdir(parents=True, exist_ok=True)
+                save_user_record(
+                    config.user_record_path(user_id),
+                    UserRecord(
+                        user_id=user_id,
+                        display_name=display_name,
+                        machine_name=f"openclaw-{user_id}",
+                        ip_address=f"172.31.0.{int(host_offset, 16)}",
+                        mac_address=f"06:00:ac:1f:00:{host_offset}",
+                        tap_name=f"oc{user_id}",
+                        rootfs_path=str(config.user_rootfs_path(user_id)),
+                        created_at="2026-03-10T00:00:00Z",
+                    ),
+                )
+            controller = HostController(config)
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch.object(
+                    controller,
+                    "google_auth_refresh",
+                    side_effect=[
+                        {
+                            "oauth_client_configured": True,
+                            "connected": True,
+                            "has_refresh_token": True,
+                            "refreshed": True,
+                            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+                            "next_step": None,
+                        },
+                        RuntimeError("ssh failed"),
+                    ],
+                ),
+            ):
+                rows = controller.google_auth_refresh_all()
+
+            self.assertEqual([row["user_id"] for row in rows], ["amy", "zoe"])
+            self.assertTrue(rows[0]["connected"])
+            self.assertTrue(rows[0]["refreshed"])
+            self.assertFalse(rows[1]["connected"])
+            self.assertEqual(rows[1]["error"], "ssh failed")
 
 
 class FirecrackerTests(unittest.TestCase):

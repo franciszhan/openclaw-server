@@ -1,0 +1,23 @@
+[Unit]
+Description=OpenClaw Google OAuth token refresh
+After=network-online.target openclaw-network.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/bin/openclaw-hostctl google-auth refresh-all
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openclaw
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
