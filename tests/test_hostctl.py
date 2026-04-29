@@ -1025,6 +1025,70 @@ class HostControllerTests(unittest.TestCase):
                         {"action_type": "email_intro_lookup"},
                     )
 
+    def test_google_auth_status_refreshes_expired_guest_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            config.user_dir("jon").mkdir(parents=True, exist_ok=True)
+            save_user_record(
+                config.user_record_path("jon"),
+                UserRecord(
+                    user_id="jon",
+                    display_name="Jon",
+                    machine_name="openclaw-jon",
+                    ip_address="172.31.0.17",
+                    mac_address="06:00:ac:1f:00:11",
+                    tap_name="ocjon",
+                    rootfs_path=str(config.user_rootfs_path("jon")),
+                    created_at="2026-03-10T00:00:00Z",
+                ),
+            )
+            controller = HostController(config)
+            expired_token = {
+                "access_token": "old-access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 3600,
+                "scope": "https://www.googleapis.com/auth/gmail.readonly",
+                "obtainedAt": "2026-01-01T00:00:00Z",
+            }
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self) -> bytes:
+                    return json.dumps(
+                        {
+                            "access_token": "new-access-token",
+                            "expires_in": 3600,
+                        }
+                    ).encode("utf-8")
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch.object(controller, "_read_guest_google_token", return_value=expired_token),
+                mock.patch.object(controller, "_write_guest_google_token") as write_token,
+                mock.patch(
+                    "openclaw_hostctl.hostctl.load_google_oauth_client",
+                    return_value={
+                        "client_id": "client-id",
+                        "client_secret": "client-secret",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                    },
+                ),
+                mock.patch("openclaw_hostctl.hostctl.urlopen", return_value=FakeResponse()),
+            ):
+                status = controller.google_auth_status("jon")
+
+            self.assertTrue(status["connected"])
+            self.assertEqual(status["scopes"], ["https://www.googleapis.com/auth/gmail.readonly"])
+            written_token = write_token.call_args.args[1]
+            self.assertEqual(written_token["access_token"], "new-access-token")
+            self.assertEqual(written_token["refresh_token"], "refresh-token")
+
 
 class FirecrackerTests(unittest.TestCase):
     def test_make_tap_name_is_stable_and_short(self) -> None:

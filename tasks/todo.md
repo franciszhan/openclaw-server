@@ -160,4 +160,5 @@
 - [x] Add host-relay and guest-helper preflights for `operator.admin` gateway pairing.
 - [x] Classify gateway pairing failures separately from true empty email-search results.
 - [x] Ensure guest email lookups use a fresh per-request OpenClaw session id instead of reusing contaminated main-agent history.
+- [x] Refresh expired guest Gmail access tokens from the host broker before shared email execution.
 - [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.

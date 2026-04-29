@@ -1035,6 +1035,15 @@ if (!hasAdmin) {
         }
         token = self._read_guest_google_token(user)
         if token:
+            try:
+                token = self._refresh_guest_google_token_if_needed(user, token)
+            except Exception as error:
+                result["next_step"] = (
+                    f"Google auth token refresh failed: {error}. "
+                    "Run `connect-google`, complete the browser consent flow, then run "
+                    '`finish-google "<callback_url>"`.'
+                )
+                return result
             scope = str(token.get("scope", ""))
             result["connected"] = True
             result["scopes"] = [value for value in scope.split() if value]
@@ -1129,6 +1138,54 @@ if (!hasAdmin) {
         if result.returncode != 0:
             return None
         return json.loads(result.stdout)
+
+    def _refresh_guest_google_token_if_needed(
+        self,
+        user: UserRecord,
+        token: dict[str, object],
+    ) -> dict[str, object]:
+        obtained_at_raw = token.get("obtainedAt")
+        expires_in_raw = token.get("expires_in")
+        refresh_token = token.get("refresh_token")
+        if not isinstance(refresh_token, str) or not refresh_token.strip():
+            return token
+        if not isinstance(obtained_at_raw, str):
+            needs_refresh = True
+        else:
+            try:
+                obtained_at = datetime.fromisoformat(obtained_at_raw.replace("Z", "+00:00"))
+                expires_in = int(expires_in_raw) if expires_in_raw is not None else 0
+                needs_refresh = datetime.now(UTC).timestamp() >= obtained_at.timestamp() + expires_in - 300
+            except (TypeError, ValueError):
+                needs_refresh = True
+        if not needs_refresh:
+            return token
+
+        client = load_google_oauth_client()
+        token_request = Request(
+            client["token_uri"],
+            data=urlencode(
+                {
+                    "client_id": client["client_id"],
+                    "client_secret": client["client_secret"],
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                }
+            ).encode("utf-8"),
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urlopen(token_request, timeout=30) as response:
+            refreshed = json.loads(response.read().decode("utf-8"))
+        token_payload = {
+            **token,
+            **refreshed,
+            "refresh_token": refresh_token,
+            "scope": refreshed.get("scope", token.get("scope", "")),
+            "obtainedAt": timestamp_now(),
+        }
+        self._write_guest_google_token(user, token_payload)
+        return token_payload
 
 
 def render_guest_network(config: HostConfig, guest_ip: str, guest_mac: str) -> str:
