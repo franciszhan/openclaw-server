@@ -141,3 +141,13 @@
 - [x] Propagate shared-access helper stderr through `openclaw-hostctl shared-access execute`.
 - [x] Add regression coverage so coordinator failure classification receives the real helper reason.
 - [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.
+
+## Shared Access Gmail Preflight Fix
+
+- [x] Inspect latest Jonathan request `3c006c257cf6` and confirm it targeted `jonathan` for `Carta`.
+- [x] Check Jonathan VM, shared-access config, and Google auth health without reading mailbox contents.
+- [x] Confirm Jonathan's Google auth is not connected, causing the lookup to return no supporting references.
+- [x] Add a Gmail connection preflight to the owner-side email lookup helper.
+- [x] Add a host-relay Gmail connection preflight so existing VMs get the clearer failure without guest refresh.
+- [x] Classify disconnected Gmail separately from true empty email-search results.
+- [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.

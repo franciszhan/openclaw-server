@@ -199,6 +199,9 @@ def main() -> int:
             except subprocess.TimeoutExpired as error:
                 print(_process_error_text(error), file=sys.stderr)
                 return 124
+            except (RuntimeError, ValueError) as error:
+                print(str(error), file=sys.stderr)
+                return 1
             print(json.dumps(result, indent=2))
             return 0
 

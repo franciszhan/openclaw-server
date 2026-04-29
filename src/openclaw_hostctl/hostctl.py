@@ -523,6 +523,16 @@ class HostController:
     ) -> dict[str, object]:
         require_root()
         user = self._load_user(user_id)
+        if str(request.get("action_type") or "") == "email_intro_lookup":
+            google_status = self.google_auth_status(user_id)
+            if not google_status.get("connected"):
+                next_step = google_status.get("next_step")
+                if not isinstance(next_step, str) or not next_step.strip():
+                    next_step = (
+                        "Run `connect-google`, complete the browser consent flow, "
+                        "then run `finish-google \"<callback_url>\"`."
+                    )
+                raise RuntimeError(f"google email access is not connected. {next_step.strip()}")
         private_key = self.config.automation_ssh_private_key_path
         if not private_key or not private_key.exists():
             raise FileNotFoundError("automation SSH private key is not configured")
@@ -1931,9 +1941,41 @@ function extractJsonObject(text) {
   return JSON.parse(text.slice(first, last + 1));
 }
 
+function requireGoogleConnected(env) {
+  const result = spawnSync("google-auth-status", [], {
+    encoding: "utf8",
+    env,
+    timeout: 30000,
+  });
+  if (result.error) {
+    fail(`google auth status check failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    fail(result.stderr || result.stdout || "google auth status check failed");
+  }
+  let status;
+  try {
+    status = JSON.parse(result.stdout);
+  } catch {
+    fail("google auth status check returned invalid JSON");
+  }
+  if (!status.connected) {
+    const nextStep = typeof status.next_step === "string" && status.next_step.trim()
+      ? status.next_step.trim()
+      : "Run `connect-google`, complete the browser consent flow, then run `finish-google \"<callback_url>\"`.";
+    fail(`google email access is not connected. ${nextStep}`);
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv);
   const request = JSON.parse(fs.readFileSync(args["--request"], "utf8"));
+  const env = {
+    ...process.env,
+    ...loadEnv("/home/admin/.openclaw/.env"),
+    HOME: "/home/admin",
+  };
+  requireGoogleConnected(env);
   const prompt = [
     "You are an owner-approved email question answering tool.",
     "Use only the local user's email access and only what is needed to answer the specific request.",
@@ -1951,11 +1993,6 @@ function main() {
     `Entity company: ${request.entity_company || ""}`,
     "Do not answer from general prior knowledge. Answer from the email evidence you find.",
   ].join("\n");
-  const env = {
-    ...process.env,
-    ...loadEnv("/home/admin/.openclaw/.env"),
-    HOME: "/home/admin",
-  };
     const result = spawnSync(
       "openclaw",
       [

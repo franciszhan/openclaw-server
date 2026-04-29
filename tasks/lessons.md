@@ -5,3 +5,4 @@
 - For shared email requests, the single owner approval must include the generated lookup content. Approval should publish stored content, not approve a future lookup or trigger a second review step.
 - For Slack DM request workflows, acknowledge a successfully accepted request before any long-running lookup starts so the requester immediately knows Spark queued it.
 - Shared-access relay CLIs must preserve guest-helper stderr on failure; otherwise coordinator classifiers lose actionable failure reasons and fall back to vague requester messages.
+- Shared email lookup helpers must preflight owner Gmail connectivity before asking the agent to search; disconnected auth should never be classified as an empty result.

@@ -408,6 +408,12 @@ def format_preview_result(record: RequestRecord) -> str:
 
 def classify_execution_failure(failure_reason: str) -> str:
     lowered = failure_reason.lower()
+    if "google email access is not connected" in lowered:
+        return (
+            "The email owner's Gmail is not connected yet. Ask them to run `connect-google`, "
+            "complete the browser consent flow, then run `finish-google \"<callback_url>\"`, "
+            "and try again."
+        )
     if "lookup returned no supporting references" in lowered:
         return (
             "The shared email request completed, but it did not find enough supporting emails to answer confidently."

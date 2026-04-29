@@ -197,6 +197,8 @@ class HostControllerTests(unittest.TestCase):
         self.assertNotIn("Read at most 3 attachments total", script)
         self.assertNotIn("raw attachment contents", script)
         self.assertIn("answer, supporting_context, why_these_emails, references.", script)
+        self.assertIn("google-auth-status", script)
+        self.assertIn("google email access is not connected", script)
         self.assertIn("lookup returned no supporting references", script)
         self.assertIn('"low"', script)
 
@@ -949,6 +951,35 @@ class HostControllerTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("lookup returned no supporting references", stderr.getvalue())
+
+    def test_shared_access_cli_surfaces_preflight_error(self) -> None:
+        config = example_config(Path("/tmp/openclaw-test"))
+        controller = mock.Mock()
+        controller.execute_shared_access.side_effect = RuntimeError(
+            "google email access is not connected. Run `connect-google`."
+        )
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(hostctl_cli, "load_host_config", return_value=config),
+            mock.patch.object(hostctl_cli, "HostController", return_value=controller),
+            mock.patch(
+                "sys.argv",
+                [
+                    "openclaw-hostctl",
+                    "--config",
+                    "/tmp/openclaw-test/host-config.json",
+                    "shared-access",
+                    "execute",
+                    "jonathan",
+                ],
+            ),
+            mock.patch("sys.stdin", io.StringIO('{"action_type":"email_intro_lookup"}\n')),
+            mock.patch("sys.stderr", stderr),
+        ):
+            exit_code = hostctl_cli.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("google email access is not connected", stderr.getvalue())
 
 
 class FirecrackerTests(unittest.TestCase):
