@@ -1987,6 +1987,12 @@ function extractJsonObject(text) {
   return JSON.parse(text.slice(first, last + 1));
 }
 
+function buildSessionId(request) {
+  const raw = String(request.request_id || `shared-email-${Date.now()}`);
+  const safe = raw.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 80);
+  return `shared-email-${safe || Date.now()}`;
+}
+
 function requireGoogleConnected(env) {
   const result = spawnSync("google-auth-status", [], {
     encoding: "utf8",
@@ -2044,6 +2050,7 @@ function main() {
   };
   requireGoogleConnected(env);
   requireGatewayAdminPaired();
+  const sessionId = buildSessionId(request);
   const prompt = [
     "You are an owner-approved email question answering tool.",
     "Use only the local user's email access and only what is needed to answer the specific request.",
@@ -2068,6 +2075,8 @@ function main() {
         "--agent",
         "main",
         "--local",
+        "--session-id",
+        sessionId,
         "--message",
         prompt,
         "--thinking",

@@ -200,6 +200,8 @@ class HostControllerTests(unittest.TestCase):
         self.assertIn("google-auth-status", script)
         self.assertIn("google email access is not connected", script)
         self.assertIn("openclaw gateway admin access is not paired", script)
+        self.assertIn('"--session-id"', script)
+        self.assertIn("shared-email-", script)
         self.assertIn("lookup returned no supporting references", script)
         self.assertIn('"low"', script)
 
