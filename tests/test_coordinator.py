@@ -11,7 +11,7 @@ from unittest import mock
 from openclaw_coordinator.config import CoordinatorConfig
 from openclaw_coordinator.intent_extractor import OpenAIIntentExtractor
 from openclaw_coordinator.models import DirectoryEntry
-from openclaw_coordinator.parser import parse_public_request
+from openclaw_coordinator.parser import parse_slack_request
 from openclaw_coordinator.service import CoordinatorService
 from openclaw_coordinator.store import CoordinatorStore
 
@@ -56,7 +56,7 @@ class FakeIntentExtractor:
         owner_aliases: dict[str, str] | None = None,
         allow_requester_as_owner: bool = False,
     ):
-        return parse_public_request(
+        return parse_slack_request(
             text=text,
             requester_slack_user_id=requester_slack_user_id,
             coordinator_slack_user_id=coordinator_slack_user_id,
@@ -70,7 +70,6 @@ def example_config(state_root: Path) -> CoordinatorConfig:
         state_root=state_root,
         relay_command=["openclaw-hostctl", "shared-access", "execute", "{owner_vm_user_id}"],
         coordinator_slack_user_id="UCOORD",
-        allowed_public_channel_ids=["CROLLOUT"],
         request_timeout_seconds=30,
         intent_extractor_model="gpt-5-nano",
         intent_extractor_api_key_env="OPENAI_API_KEY",
@@ -117,11 +116,11 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_submit_request_creates_pending_owner_approval(self) -> None:
-        result = self.service.submit_public_request(
+        result = self.service.submit_dm_request(
             {
                 "event_id": "evt-1",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails related to this founder he mentioned in email?",
             }
@@ -131,24 +130,25 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(request["owner_slack_user_id"], "UOWNER")
         self.assertEqual(request["mode"], "read_only")
         self.assertEqual(len(result["actions"]), 2)
-        self.assertEqual(result["actions"][0]["kind"], "public_ack")
+        self.assertEqual(result["actions"][0]["kind"], "requester_dm_ack")
+        self.assertEqual(result["actions"][0]["channel_id"], "DREQ")
         self.assertEqual(result["actions"][1]["kind"], "owner_dm_approval")
 
     def test_duplicate_event_is_ignored(self) -> None:
-        first = self.service.submit_public_request(
+        first = self.service.submit_dm_request(
             {
                 "event_id": "evt-1",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails related to this founder?",
             }
         )
-        second = self.service.submit_public_request(
+        second = self.service.submit_dm_request(
             {
                 "event_id": "evt-1",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails related to this founder?",
             }
@@ -157,18 +157,18 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(first["request"]["request_id"], second["request"]["request_id"])
         self.assertEqual(len(self.store.list_requests()), 1)
 
-    def test_public_self_request_is_allowed_when_testing_flag_is_enabled(self) -> None:
+    def test_self_request_is_routed_for_approval(self) -> None:
         self.service = CoordinatorService(
-            replace(example_config(self.state_root), allow_self_requests_for_testing=True),
+            example_config(self.state_root),
             self.store,
             self.executor,
             intent_extractor=FakeIntentExtractor(),
         )
-        result = self.service.submit_public_request(
+        result = self.service.submit_dm_request(
             {
                 "event_id": "evt-self-1",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.333",
                 "text": "<@UCOORD> <@UREQUEST> latest info on 1money",
             }
@@ -178,7 +178,7 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(request["requester_slack_user_id"], "UREQUEST")
         self.assertEqual(request["status"], "pending_owner_approval")
 
-    def test_non_opted_in_owner_is_denied(self) -> None:
+    def test_non_opted_in_owner_is_routed_for_approval(self) -> None:
         self.service.upsert_directory_entry(
             DirectoryEntry(
                 slack_user_id="UDENY",
@@ -189,23 +189,39 @@ class CoordinatorServiceTests(unittest.TestCase):
                 shared_capabilities=["email_intro_lookup"],
             )
         )
-        with self.assertRaisesRegex(ValueError, "has not opted in"):
-            self.service.submit_public_request(
-                {
-                    "event_id": "evt-2",
-                    "requester_slack_user_id": "UREQUEST",
-                    "channel_id": "C123",
-                    "thread_ts": "111.222",
-                    "text": "<@UCOORD> can <@UDENY> look up emails about this founder?",
-                }
-            )
+        result = self.service.submit_dm_request(
+            {
+                "event_id": "evt-2",
+                "requester_slack_user_id": "UREQUEST",
+                "channel_id": "DREQ",
+                "thread_ts": "111.222",
+                "text": "<@UCOORD> can <@UDENY> look up emails about this founder?",
+            }
+        )
+        self.assertEqual(result["request"]["status"], "pending_owner_approval")
+        self.assertEqual(result["request"]["owner_slack_user_id"], "UDENY")
 
-    def test_owner_reject_posts_public_rejection(self) -> None:
-        submit = self.service.submit_public_request(
+    def test_unregistered_requester_is_routed_for_owner_approval(self) -> None:
+        result = self.service.submit_dm_request(
+            {
+                "event_id": "evt-unregistered",
+                "requester_slack_user_id": "UNEW",
+                "channel_id": "DNEW",
+                "thread_ts": "111.444",
+                "text": "<@UCOORD> can <@UOWNER> find every email about 1Money?",
+            }
+        )
+        self.assertEqual(result["request"]["status"], "pending_owner_approval")
+        self.assertEqual(result["request"]["requester_slack_user_id"], "UNEW")
+        self.assertIsNone(result["request"]["requester_vm_user_id"])
+        self.assertEqual(result["actions"][0]["kind"], "requester_dm_ack")
+
+    def test_owner_reject_sends_requester_dm_rejection(self) -> None:
+        submit = self.service.submit_dm_request(
             {
                 "event_id": "evt-3",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails about this founder?",
             }
@@ -217,7 +233,7 @@ class CoordinatorServiceTests(unittest.TestCase):
             decision="reject",
         )
         self.assertEqual(result["request"]["status"], "owner_rejected")
-        self.assertEqual(result["actions"][0]["kind"], "public_rejected")
+        self.assertEqual(result["actions"][0]["kind"], "requester_dm_rejected")
 
     def test_owner_approve_lookup_miss_gets_friendly_failure_message(self) -> None:
         service = CoordinatorService(
@@ -226,11 +242,11 @@ class CoordinatorServiceTests(unittest.TestCase):
             FailingExecutor(),
             intent_extractor=FakeIntentExtractor(),
         )
-        submit = service.submit_public_request(
+        submit = service.submit_dm_request(
             {
                 "event_id": "evt-miss",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails about Rava Money?",
             }
@@ -243,14 +259,15 @@ class CoordinatorServiceTests(unittest.TestCase):
         )
         self.assertEqual(failed["request"]["status"], "failed")
         self.assertIn("did not find enough supporting emails", failed["actions"][0]["text"])
+        self.assertEqual(failed["actions"][0]["kind"], "requester_dm_failed")
         self.assertIn("did not find enough supporting emails", failed["request"]["result_metadata"]["user_error"])
 
-    def test_owner_approve_then_publish(self) -> None:
-        submit = self.service.submit_public_request(
+    def test_owner_approve_executes_and_publishes_to_requester_dm(self) -> None:
+        submit = self.service.submit_dm_request(
             {
                 "event_id": "evt-4",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails related to this founder he mentioned in email?",
             }
@@ -261,34 +278,38 @@ class CoordinatorServiceTests(unittest.TestCase):
             owner_slack_user_id="UOWNER",
             decision="approve",
         )
-        self.assertEqual(approved["request"]["status"], "owner_review_pending")
-        self.assertEqual(approved["actions"][0]["kind"], "owner_dm_review")
-        published = self.service.record_owner_review(
-            request_id,
-            owner_slack_user_id="UOWNER",
-            decision="publish",
-        )
-        self.assertEqual(published["request"]["status"], "published")
-        self.assertEqual(published["actions"][0]["kind"], "public_published")
-        self.assertIn("*Answer*", published["actions"][0]["text"])
-        self.assertIn("*References*", published["actions"][0]["text"])
+        self.assertEqual(approved["request"]["status"], "published")
+        self.assertIsNotNone(approved["request"]["published_at"])
+        self.assertEqual(len(approved["actions"]), 1)
+        self.assertEqual(approved["actions"][0]["kind"], "requester_dm_published")
+        self.assertEqual(approved["actions"][0]["channel_id"], "DREQ")
+        self.assertIn("*Answer*", approved["actions"][0]["text"])
+        self.assertIn("*References*", approved["actions"][0]["text"])
         self.assertEqual(len(self.executor.calls), 1)
 
-    def test_owner_review_cancel_posts_public_notice(self) -> None:
-        submit = self.service.submit_public_request(
+    def test_legacy_owner_review_cancel_sends_requester_dm_notice(self) -> None:
+        submit = self.service.submit_dm_request(
             {
                 "event_id": "evt-4b",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails about this founder?",
             }
         )
         request_id = submit["request"]["request_id"]
-        self.service.record_owner_decision(
-            request_id,
-            owner_slack_user_id="UOWNER",
-            decision="approve",
+        record = self.store.load_request(request_id)
+        self.store.save_request(
+            replace(
+                record,
+                status="owner_review_pending",
+                result={
+                    "answer": "draft",
+                    "supporting_context": "context",
+                    "why_these_emails": "because",
+                    "references": [],
+                },
+            )
         )
         cancelled = self.service.record_owner_review(
             request_id,
@@ -296,14 +317,14 @@ class CoordinatorServiceTests(unittest.TestCase):
             decision="cancel",
         )
         self.assertEqual(cancelled["request"]["status"], "failed")
-        self.assertEqual(cancelled["actions"][0]["kind"], "public_cancelled")
+        self.assertEqual(cancelled["actions"][0]["kind"], "requester_dm_cancelled")
 
     def test_audit_log_is_written(self) -> None:
-        self.service.submit_public_request(
+        self.service.submit_dm_request(
             {
                 "event_id": "evt-6",
                 "requester_slack_user_id": "UREQUEST",
-                "channel_id": "C123",
+                "channel_id": "DREQ",
                 "thread_ts": "111.222",
                 "text": "<@UCOORD> can <@UOWNER> look up emails about this founder?",
             }
@@ -315,113 +336,96 @@ class CoordinatorServiceTests(unittest.TestCase):
 
 
 class ParserSafetyTests(unittest.TestCase):
-    def test_lookup_style_requests_from_non_technical_users(self) -> None:
+    def test_lookup_style_requests_from_non_technical_users_are_not_content_filtered(self) -> None:
         cases = [
             {
                 "name": "portfolio company summary",
                 "text": "<@UCOORD> can <@UOWNER> look up emails related to 1Money and summarize the latest context?",
-                "allowed": True,
                 "entity": "1Money",
             },
             {
                 "name": "crm style ask",
                 "text": "<@UCOORD> can <@UOWNER> please find emails about Ramp and summarize anything important from the last few conversations",
-                "allowed": True,
                 "entity": "Ramp",
             },
             {
                 "name": "pass decision ask",
                 "text": "<@UCOORD> did <@UOWNER> pass on Databento?",
-                "allowed": True,
                 "entity": "Databento",
             },
             {
                 "name": "compliance concern ask",
                 "text": "<@UCOORD> can <@UOWNER> tell me who flagged compliance concerns on Ramp?",
-                "allowed": True,
                 "entity": "Ramp",
             },
             {
                 "name": "broad mailbox ask",
                 "text": "<@UCOORD> can <@UOWNER> show me all emails about crypto deals?",
-                "allowed": False,
-                "error": "broader than the allowed scoped email lookup",
+                "entity": "crypto deals",
             },
             {
                 "name": "raw email ask",
                 "text": "<@UCOORD> can <@UOWNER> paste the email about 1Money here?",
-                "allowed": False,
-                "error": "raw email content or forwarding",
             },
             {
                 "name": "forwarding ask",
                 "text": "<@UCOORD> can <@UOWNER> forward me the email from the founder at 1Money?",
-                "allowed": False,
-                "error": "raw email content or forwarding",
             },
             {
                 "name": "sensitive off topic ask",
                 "text": "<@UCOORD> can <@UOWNER> search emails for salary discussions with that founder?",
-                "allowed": False,
-                "error": "sensitive or off-topic",
             },
             {
                 "name": "private email ask",
                 "text": "<@UCOORD> can <@UOWNER> find Boris's personal email threads about this company?",
-                "allowed": False,
-                "error": "sensitive or off-topic",
             },
             {
                 "name": "generic email summary",
                 "text": "<@UCOORD> can <@UOWNER> summarize emails about Figure from the last year?",
-                "allowed": True,
                 "entity": "Figure from the last year",
             },
             {
                 "name": "public alias owner and latest info phrasing",
                 "text": "<@UCOORD> @Boris can you send me latest info on 1Money",
-                "allowed": True,
                 "entity": "1Money",
                 "owner_aliases": {"Boris": "UOWNER"},
             },
             {
                 "name": "public full-name alias owner and latest context phrasing",
                 "text": "<@UCOORD> @Boris Revsin can you give me the latest context on Ramp?",
-                "allowed": True,
                 "entity": "Ramp",
                 "owner_aliases": {"Boris Revsin": "UOWNER"},
             },
             {
                 "name": "plain latest-on phrasing",
                 "text": "<@UCOORD> <@UOWNER> What's the latest on Grass?",
-                "allowed": True,
                 "entity": "Grass",
+            },
+            {
+                "name": "dm check owner email latest updates phrasing",
+                "text": "hey spark, can you check @Francis Zhan email for the latest updates on EDG?",
+                "entity": "EDG",
+                "owner_aliases": {"Francis Zhan": "UOWNER"},
             },
             {
                 "name": "not a lookup",
                 "text": "<@UCOORD> can <@UOWNER> help me think about IC prep?",
-                "allowed": False,
-                "error": "must ask a firm-relevant shared email question",
             },
         ]
 
         for case in cases:
             with self.subTest(case["name"]):
-                kwargs = {
-                    "text": case["text"],
-                    "requester_slack_user_id": "UREQUEST",
-                    "coordinator_slack_user_id": "UCOORD",
-                    "owner_aliases": case.get("owner_aliases"),
-                }
-                if case["allowed"]:
-                    parsed = parse_public_request(**kwargs)
-                    self.assertEqual(parsed.mode, "read_only")
-                    self.assertEqual(parsed.action_type, "email_intro_lookup")
-                    self.assertEqual(parsed.owner_slack_user_id, "UOWNER")
+                parsed = parse_slack_request(
+                    text=case["text"],
+                    requester_slack_user_id="UREQUEST",
+                    coordinator_slack_user_id="UCOORD",
+                    owner_aliases=case.get("owner_aliases"),
+                )
+                self.assertEqual(parsed.mode, "read_only")
+                self.assertEqual(parsed.action_type, "email_intro_lookup")
+                self.assertEqual(parsed.owner_slack_user_id, "UOWNER")
+                if "entity" in case:
                     self.assertEqual(parsed.entity_name, case["entity"])
-                else:
-                    with self.assertRaisesRegex(ValueError, case["error"]):
-                        parse_public_request(**kwargs)
 
 
 class OpenAIIntentExtractorTests(unittest.TestCase):

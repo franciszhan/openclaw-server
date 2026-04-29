@@ -111,21 +111,18 @@ Components:
 
 Execution path:
 
-1. A requester asks in a public Slack thread.
-2. The coordinator parses the request into a typed operation.
+1. A requester DMs the coordinator.
+2. The coordinator parses the request into a typed operation and routes it to the named owner.
 3. The owner approves or rejects in DM.
 4. The coordinator calls the host relay.
 5. The host relay SSHes into the owner VM with a host-managed automation key.
 6. The owner VM runs only the typed shared-access helper, not the main personalized OpenClaw agent.
-7. The owner reviews the result once more before publication.
-
-For one-user DM testing only, the coordinator can be placed into an explicit self-test mode. In that mode, a DM can default to a configured owner Slack ID and bypass the usual requester-versus-owner separation check. Keep that disabled outside test runs.
+7. The coordinator sends the successful result back to the requester by DM.
 
 Security properties:
 
 - default deny
-- opt-in per owner
+- approval per request
 - typed capabilities only
-- no raw email body export by default
 - no direct guest-to-guest network dependency
 - coordinator can live off-host because the host relay terminates the private VM access path

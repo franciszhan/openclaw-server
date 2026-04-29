@@ -325,12 +325,12 @@ Minimal Slack app requirements for coordinator testing:
 - app-level token with `connections:write`
 - bot scopes:
   - `chat:write`
-  - `app_mentions:read`
   - `im:history`
   - `im:write`
 - events:
-  - `app_mention`
   - `message.im`
+
+New shared-access requests start by DMing the coordinator bot. The coordinator does not accept public-channel requests; if `app_mention` events are enabled for convenience, public mentions are only used to nudge the requester back to DM. For email lookups, the owner approves or rejects once; approval runs the lookup and sends the result to the requester without a second publish step.
 
 Initialize state and register each opted-in owner manifest:
 
@@ -353,13 +353,13 @@ The host relay command:
 sudo openclaw-hostctl shared-access execute alice < request.json
 ```
 
-reads one typed shared-access request from stdin, SSHes into the target VM using the host automation key, runs `/usr/local/bin/openclaw-shared-access execute`, and prints sanitized JSON to stdout.
+reads one typed shared-access request from stdin, SSHes into the target VM using the host automation key, runs `/usr/local/bin/openclaw-shared-access execute`, and prints JSON to stdout.
 
 The coordinator should use this path only for typed lookup operations like:
 
 - `email_intro_lookup`
 
-If the per-user `shared_access` config does not override the command array, `email_intro_lookup` defaults to the built-in `company-email-intro-lookup` wrapper, which calls `openclaw agent --local` inside the owner VM and answers the specific request from the owner's email evidence within the default 1-year time window.
+If the per-user `shared_access` config does not override the command array, `email_intro_lookup` defaults to the built-in `company-email-intro-lookup` wrapper, which calls `openclaw agent --local` inside the owner VM and answers the approved request from the owner's email evidence.
 
 Do not use it to forward arbitrary prompts into another employee's general OpenClaw agent.
 

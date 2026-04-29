@@ -71,7 +71,7 @@ class RequestRecord:
     request_id: str
     source_event_id: str
     requester_slack_user_id: str
-    requester_vm_user_id: str
+    requester_vm_user_id: str | None
     owner_slack_user_id: str
     owner_vm_user_id: str
     action_type: str
@@ -80,8 +80,8 @@ class RequestRecord:
     entity_company: str | None
     purpose: str
     status: str
-    public_channel_id: str
-    public_thread_ts: str
+    response_channel_id: str
+    response_thread_ts: str
     raw_text: str
     created_at: str
     updated_at: str
@@ -104,7 +104,11 @@ class RequestRecord:
             request_id=str(data["request_id"]),
             source_event_id=str(data["source_event_id"]),
             requester_slack_user_id=str(data["requester_slack_user_id"]),
-            requester_vm_user_id=str(data["requester_vm_user_id"]),
+            requester_vm_user_id=(
+                str(data["requester_vm_user_id"])
+                if data.get("requester_vm_user_id")
+                else None
+            ),
             owner_slack_user_id=str(data["owner_slack_user_id"]),
             owner_vm_user_id=str(data["owner_vm_user_id"]),
             action_type=str(data["action_type"]),
@@ -113,8 +117,16 @@ class RequestRecord:
             entity_company=str(data["entity_company"]) if data.get("entity_company") else None,
             purpose=str(data["purpose"]),
             status=status,
-            public_channel_id=str(data["public_channel_id"]),
-            public_thread_ts=str(data["public_thread_ts"]),
+            response_channel_id=str(
+                data.get("response_channel_id")
+                or data.get("public_channel_id")
+                or ""
+            ),
+            response_thread_ts=str(
+                data.get("response_thread_ts")
+                or data.get("public_thread_ts")
+                or ""
+            ),
             raw_text=str(data["raw_text"]),
             created_at=str(data["created_at"]),
             updated_at=str(data["updated_at"]),

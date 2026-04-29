@@ -91,7 +91,6 @@ class CoordinatorService:
                 "actions": [],
                 "duplicate": True,
             }
-        entrypoint = str(event.get("entrypoint", "public_thread"))
         requester_slack_user_id = str(event["requester_slack_user_id"])
         allow_requester_as_owner = bool(self.config.allow_self_requests_for_testing)
         owner_aliases = self._owner_aliases()
@@ -112,14 +111,13 @@ class CoordinatorService:
         )
         if policy_error:
             raise ValueError(policy_error)
-        assert requester is not None
         assert owner is not None
         now = timestamp_now()
         record = RequestRecord(
             request_id=uuid.uuid4().hex[:12],
             source_event_id=source_event_id,
-            requester_slack_user_id=requester.slack_user_id,
-            requester_vm_user_id=requester.vm_user_id,
+            requester_slack_user_id=requester_slack_user_id,
+            requester_vm_user_id=requester.vm_user_id if requester else None,
             owner_slack_user_id=owner.slack_user_id,
             owner_vm_user_id=owner.vm_user_id,
             action_type=parsed.action_type,
@@ -128,23 +126,23 @@ class CoordinatorService:
             entity_company=parsed.entity_company,
             purpose=parsed.purpose,
             status="pending_owner_approval",
-            public_channel_id=str(event["channel_id"]),
-            public_thread_ts=str(event["thread_ts"]),
+            response_channel_id=str(event["channel_id"]),
+            response_thread_ts=str(event["thread_ts"]),
             raw_text=parsed.raw_text,
             created_at=now,
             updated_at=now,
         )
         self.store.save_request(record)
         self._audit("request_submitted", record)
+        requester_display = requester.display_name if requester else f"<@{requester_slack_user_id}>"
         actions = [
             CoordinatorAction(
-                kind="public_ack",
+                kind="requester_dm_ack",
                 request_id=record.request_id,
-                channel_id=record.public_channel_id,
-                thread_ts=record.public_thread_ts,
+                channel_id=record.response_channel_id,
+                thread_ts=record.response_thread_ts,
                 text=(
-                    f"Request `{record.request_id}` queued for {owner.display_name}'s approval "
-                    "for a shared email request."
+                    f"Request `{record.request_id}` sent to {owner.display_name} for approval."
                 ),
             ),
             CoordinatorAction(
@@ -152,7 +150,7 @@ class CoordinatorService:
                 request_id=record.request_id,
                 slack_user_id=owner.slack_user_id,
                 text=(
-                    f"{requester.display_name} requested a shared email question for "
+                    f"{requester_display} requested a shared email question for "
                     f"`{record.entity_name}`.\n\n"
                     f"Request ID: `{record.request_id}`\n"
                     f"Reply with `approve {record.request_id}` or `reject {record.request_id}`."
@@ -161,10 +159,13 @@ class CoordinatorService:
         ]
         return {"request": record.to_dict(), "actions": [action.to_dict() for action in actions]}
 
+    def submit_dm_request(self, event: dict[str, object]) -> dict[str, object]:
+        dm_event = dict(event)
+        dm_event.setdefault("entrypoint", "dm")
+        return self.submit_slack_request(dm_event)
+
     def submit_public_request(self, event: dict[str, object]) -> dict[str, object]:
-        public_event = dict(event)
-        public_event.setdefault("entrypoint", "public_thread")
-        return self.submit_slack_request(public_event)
+        return self.submit_dm_request(event)
 
     def record_owner_decision(
         self,
@@ -190,10 +191,10 @@ class CoordinatorService:
             self._audit("owner_rejected", updated)
             actions = [
                 CoordinatorAction(
-                    kind="public_rejected",
+                    kind="requester_dm_rejected",
                     request_id=updated.request_id,
-                    channel_id=updated.public_channel_id,
-                    thread_ts=updated.public_thread_ts,
+                    channel_id=updated.response_channel_id,
+                    thread_ts=updated.response_thread_ts,
                     text="The owner declined this shared email request.",
                 )
             ]
@@ -223,37 +224,35 @@ class CoordinatorService:
             self._audit("execution_failed", failed)
             actions = [
                 CoordinatorAction(
-                    kind="public_failed",
+                    kind="requester_dm_failed",
                     request_id=failed.request_id,
-                    channel_id=failed.public_channel_id,
-                    thread_ts=failed.public_thread_ts,
+                    channel_id=failed.response_channel_id,
+                    thread_ts=failed.response_thread_ts,
                     text=user_error,
                 )
             ]
             return {"request": failed.to_dict(), "actions": [action.to_dict() for action in actions]}
 
-        reviewed = replace(
+        completed_at = timestamp_now()
+        published = replace(
             approved,
-            status="owner_review_pending",
-            updated_at=timestamp_now(),
+            status="published",
+            updated_at=completed_at,
             result=result,
+            published_at=completed_at,
         )
-        self.store.save_request(reviewed)
-        self._audit("owner_review_pending", reviewed)
+        self.store.save_request(published)
+        self._audit("published", published)
         actions = [
             CoordinatorAction(
-                kind="owner_dm_review",
-                request_id=reviewed.request_id,
-                slack_user_id=reviewed.owner_slack_user_id,
-                text=(
-                    "Execution completed.\n\n"
-                    f"Request ID: `{reviewed.request_id}`\n"
-                    f"{format_preview_result(reviewed)}\n\n"
-                    f"Reply with `publish {reviewed.request_id}` or `cancel {reviewed.request_id}`."
-                ),
-            )
+                kind="requester_dm_published",
+                request_id=published.request_id,
+                channel_id=published.response_channel_id,
+                thread_ts=published.response_thread_ts,
+                text=format_requester_result(published),
+            ),
         ]
-        return {"request": reviewed.to_dict(), "actions": [action.to_dict() for action in actions]}
+        return {"request": published.to_dict(), "actions": [action.to_dict() for action in actions]}
 
     def record_owner_review(
         self,
@@ -280,10 +279,10 @@ class CoordinatorService:
             self._audit("owner_review_cancelled", updated)
             actions = [
                 CoordinatorAction(
-                    kind="public_cancelled",
+                    kind="requester_dm_cancelled",
                     request_id=updated.request_id,
-                    channel_id=updated.public_channel_id,
-                    thread_ts=updated.public_thread_ts,
+                    channel_id=updated.response_channel_id,
+                    thread_ts=updated.response_thread_ts,
                     text="The owner reviewed the result and chose not to publish it.",
                 )
             ]
@@ -301,11 +300,11 @@ class CoordinatorService:
         self._audit("published", published)
         actions = [
             CoordinatorAction(
-                kind="public_published",
+                kind="requester_dm_published",
                 request_id=published.request_id,
-                channel_id=published.public_channel_id,
-                thread_ts=published.public_thread_ts,
-                text=format_public_result(published),
+                channel_id=published.response_channel_id,
+                thread_ts=published.response_thread_ts,
+                text=format_requester_result(published),
             )
         ]
         return {"request": published.to_dict(), "actions": [action.to_dict() for action in actions]}
@@ -334,7 +333,7 @@ class CoordinatorService:
         return aliases
 
 
-def format_public_result(record: RequestRecord) -> str:
+def format_requester_result(record: RequestRecord) -> str:
     result = record.result or {}
     lines = [
         f"Request `{record.request_id}` completed for `{record.entity_name}`.",
@@ -356,6 +355,10 @@ def format_public_result(record: RequestRecord) -> str:
             date = reference.get("date") or "unknown date"
             lines.append(f"- {subject} ({sender}, {date})")
     return "\n".join(lines)
+
+
+def format_public_result(record: RequestRecord) -> str:
+    return format_requester_result(record)
 
 
 def format_preview_result(record: RequestRecord) -> str:
@@ -388,7 +391,7 @@ def classify_execution_failure(failure_reason: str) -> str:
         )
     if "timed out" in lowered:
         return "The shared email request took too long and timed out before producing a result."
-    return "The scoped shared email request failed before publication."
+    return "The shared email request failed before it could be sent to the requester."
 
 
 def extract_failure_text(error: Exception) -> str:

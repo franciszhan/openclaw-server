@@ -11,7 +11,7 @@ from .config import CoordinatorConfig
 from .models import ParsedRequest
 from .parser import (
     normalize_request_text,
-    parse_public_request,
+    parse_slack_request,
 )
 
 
@@ -34,7 +34,7 @@ class OpenAIIntentExtractor:
         owner_aliases: dict[str, str] | None = None,
         allow_requester_as_owner: bool = False,
     ) -> ParsedRequest:
-        fallback = parse_public_request(
+        fallback = parse_slack_request(
             text=text,
             requester_slack_user_id=requester_slack_user_id,
             coordinator_slack_user_id=coordinator_slack_user_id,

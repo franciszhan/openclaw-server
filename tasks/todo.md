@@ -75,3 +75,41 @@
 - Verified locally with `PYTHONPATH=src python3 -m unittest tests.test_hostctl` and `python3 -m compileall src/openclaw_hostctl tests/test_hostctl.py`.
 - Synced host-side fixes to prod, added explicit `google_oauth_broker_root` to `/etc/openclaw/host-config.json`, and verified the prod host tests no longer mutate live broker state.
 - Rebuilt the prod broker inventory with `openclaw-hostctl google-auth reconcile`, verified `alice` is gone from host broker state, and confirmed `google-auth-status` succeeds again on both `francis` and `lauren`.
+
+## AgentCoordinator DM-Only Update
+
+- [x] Map current coordinator, Slack transport, parser, and shared-access helper behavior.
+- [x] Switch new Slack requests to DM-only and route requester-visible updates back to the requester DM.
+- [x] Remove coordinator-side email lookup content filters so owner approval/review is the gate.
+- [x] Relax requester-side directory guardrails while preserving owner routing required for execution.
+- [x] Update tests, config examples, and docs for the DM-only workflow.
+- [x] Verify with targeted coordinator tests, Slack transport tests, full unit tests, and compile checks.
+
+## AgentCoordinator DM-Only Review
+
+- New Slack requests now start from coordinator DMs, public app mentions only send private DM guidance, and requester-visible lifecycle messages stay in the requester DM.
+- Coordinator-side content filters for broad mailbox, raw email, sensitive-topic, and non-lookup phrasing were removed; owner approval is the gate.
+- Requesters no longer need a coordinator directory entry; the owner still must resolve to a directory entry so the coordinator can DM and execute against the owner VM.
+- Generated shared-access config no longer includes default recipient filters, and the built-in email lookup prompt no longer imposes the old 1-year, attachment-count, or raw-content wording.
+- Verified with `PYTHONPATH=src python3 -m unittest tests.test_coordinator tests.test_slack_transport`, `make test`, `PYTHONPATH=src python3 -m compileall src tests`, and `make validate`.
+
+## AgentCoordinator Single-Approval Update
+
+- [x] Publish email lookup results to the requester immediately after owner approval and successful execution.
+- [x] Stop emitting new owner review actions/buttons for email lookup requests.
+- [x] Keep existing review command handling compatible for any old `owner_review_pending` records.
+- [x] Update tests and docs for the single owner approval workflow.
+- [x] Verify with targeted coordinator tests, full tests, compile checks, and validation.
+
+## AgentCoordinator Single-Approval Review
+
+- Owner approval now executes the email lookup and immediately transitions the request to `published`.
+- Successful approvals emit `requester_dm_published` directly instead of `owner_dm_review`.
+- Existing `record_owner_review` and review Slack actions remain available for older saved `owner_review_pending` requests.
+- Verified with `PYTHONPATH=src python3 -m unittest tests.test_coordinator`, `PYTHONPATH=src python3 -m unittest tests.test_coordinator tests.test_slack_transport`, `make test`, `PYTHONPATH=src python3 -m compileall src tests`, and `make validate`.
+
+## AgentCoordinator DM Phrase Fix
+
+- [x] Add a regression for `hey spark, can you check @Francis Zhan email for the latest updates on EDG?`.
+- [x] Parse `latest updates on <entity>` before generic `email for <entity>` so the fallback entity is `EDG`.
+- [x] Verify with `PYTHONPATH=src python3 -m unittest tests.test_coordinator`, `make test`, `PYTHONPATH=src python3 -m compileall src tests`, and `make validate`.

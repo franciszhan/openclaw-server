@@ -1247,16 +1247,6 @@ def extract_shared_access_config(manifest: dict[str, object]) -> dict[str, objec
     lookup = config.setdefault("email_intro_lookup", {})
     if isinstance(lookup, dict):
         lookup.setdefault(
-            "allowedRecipientFilters",
-            [
-                "leads@tribecap.co",
-                "portfolio-passive@tribecap.co",
-                "portfolio-active@tribecap.co",
-                "crypto-passive@tribecap.co",
-                "crypto@tribecap.co",
-            ],
-        )
-        lookup.setdefault(
             "command",
             [
                 "/usr/local/bin/company-email-intro-lookup",
@@ -1945,19 +1935,14 @@ function main() {
   const args = parseArgs(process.argv);
   const request = JSON.parse(fs.readFileSync(args["--request"], "utf8"));
   const prompt = [
-    "You are a scoped, owner-approved email question answering tool.",
+    "You are an owner-approved email question answering tool.",
     "Use only the local user's email access and only what is needed to answer the specific request.",
-    "Do not read unrelated sources and do not broaden the search beyond the specific question.",
-    "Search only the last 1 year of email history.",
-    "Build context from that 1-year window on the requested subject and question.",
-    "Unless the requester explicitly asks otherwise, focus on the most recent few relevant emails first.",
-    "First identify the most relevant recent emails, then inspect attachments only if they are needed to answer the specific question with evidence.",
-    "Read at most 3 attachments total, and only the most important ones after you have enough context to choose them deliberately.",
-    "Do not reveal raw email bodies, snippets, or raw attachment contents.",
+    "Answer the owner-approved request as asked, including any time window, breadth, or detail level the requester specified.",
+    "Use email evidence and attachments as needed to answer the approved request.",
     "Return strict JSON with exactly these keys:",
     "answer, supporting_context, why_these_emails, references.",
     "answer should directly answer the requester's specific question. If the evidence is mixed or weak, say so explicitly.",
-    "supporting_context should summarize the most relevant supporting business, diligence, compliance, or relationship context from the emails and, if needed, up to 3 carefully chosen attachments.",
+    "supporting_context should summarize the most relevant supporting business, diligence, compliance, or relationship context from the emails and attachments.",
     "why_these_emails should explain why the selected emails were chosen and why they are the strongest support for the answer.",
     "Each reference entry may only include: message_id, thread_id, subject, sender, recipients, date.",
     `Requester slack id: ${request.requester_slack_user_id || ""}`,

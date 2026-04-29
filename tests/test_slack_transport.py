@@ -39,7 +39,6 @@ def example_config() -> CoordinatorConfig:
         state_root=Path("/tmp/coordinator-state"),
         relay_command=["openclaw-hostctl", "shared-access", "execute", "{owner_vm_user_id}"],
         coordinator_slack_user_id="UCOORD",
-        allowed_public_channel_ids=["CROLLOUT"],
         request_timeout_seconds=180,
         intent_extractor_model="gpt-5-nano",
         intent_extractor_api_key_env="OPENAI_API_KEY",
@@ -50,13 +49,13 @@ def example_config() -> CoordinatorConfig:
     )
 
 
-class SlackTransportRolloutTests(unittest.TestCase):
+class SlackTransportDmOnlyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.service = FakeService()
         self.runner = SlackSocketModeRunner(example_config(), self.service)  # type: ignore[arg-type]
         self.runner.api = FakeApi()  # type: ignore[assignment]
 
-    def test_disallowed_public_channel_gets_denial(self) -> None:
+    def test_public_app_mention_sends_dm_guidance_without_submitting_request(self) -> None:
         self.runner._handle_events_api(
             {
                 "event_id": "evt-1",
@@ -71,9 +70,10 @@ class SlackTransportRolloutTests(unittest.TestCase):
         )
         self.assertEqual(self.service.submitted_events, [])
         self.assertEqual(len(self.runner.api.messages), 1)
-        self.assertIn("only accepts new requests in <#CROLLOUT>", self.runner.api.messages[0]["text"])
+        self.assertEqual(self.runner.api.messages[0]["channel"], "UREQUEST")
+        self.assertIn("Please DM me", self.runner.api.messages[0]["text"])
 
-    def test_allowed_public_channel_submits_request(self) -> None:
+    def test_public_app_mention_never_submits_request(self) -> None:
         self.runner._handle_events_api(
             {
                 "event_id": "evt-2",
@@ -86,11 +86,11 @@ class SlackTransportRolloutTests(unittest.TestCase):
                 },
             }
         )
-        self.assertEqual(len(self.service.submitted_events), 1)
-        self.assertEqual(self.service.submitted_events[0]["entrypoint"], "public_thread")
-        self.assertEqual(self.runner.api.messages, [])
+        self.assertEqual(self.service.submitted_events, [])
+        self.assertEqual(len(self.runner.api.messages), 1)
+        self.assertEqual(self.runner.api.messages[0]["channel"], "UREQUEST")
 
-    def test_dm_non_command_is_denied_for_new_requests(self) -> None:
+    def test_dm_non_command_submits_new_request(self) -> None:
         self.runner._handle_events_api(
             {
                 "event_id": "evt-3",
@@ -104,9 +104,11 @@ class SlackTransportRolloutTests(unittest.TestCase):
                 },
             }
         )
-        self.assertEqual(self.service.submitted_events, [])
-        self.assertEqual(len(self.runner.api.messages), 1)
-        self.assertIn("DMs are only used for approvals and review", self.runner.api.messages[0]["text"])
+        self.assertEqual(len(self.service.submitted_events), 1)
+        self.assertEqual(self.service.submitted_events[0]["entrypoint"], "dm")
+        self.assertEqual(self.service.submitted_events[0]["channel_id"], "D123")
+        self.assertEqual(self.service.submitted_events[0]["thread_ts"], "")
+        self.assertEqual(self.runner.api.messages, [])
 
     def test_config_can_read_slack_tokens_from_env(self) -> None:
         with mock.patch.dict(
@@ -121,7 +123,6 @@ class SlackTransportRolloutTests(unittest.TestCase):
                 {
                     "state_root": "/tmp/coordinator-state",
                     "relay_command": ["openclaw-hostctl", "shared-access", "execute", "{owner_vm_user_id}"],
-                    "allowed_public_channel_ids": ["CROLLOUT"],
                     "request_timeout_seconds": 180,
                     "slack_bot_token_env": "BOT_TOKEN_ENV",
                     "slack_app_token_env": "APP_TOKEN_ENV",

@@ -186,16 +186,13 @@ class HostControllerTests(unittest.TestCase):
                 (mount_dir / "home/admin/.openclaw/workspace/secrets/google-gmail-token.json").exists()
             )
 
-    def test_lookup_script_scopes_time_window_and_recent_focus(self) -> None:
+    def test_lookup_script_answers_owner_approved_request_without_default_content_filters(self) -> None:
         script = render_email_intro_lookup_script()
-        self.assertIn("Search only the last 1 year of email history.", script)
-        self.assertIn("Build context from that 1-year window on the requested subject and question.", script)
-        self.assertIn(
-            "Unless the requester explicitly asks otherwise, focus on the most recent few relevant emails first.",
-            script,
-        )
-        self.assertIn("Read at most 3 attachments total", script)
-        self.assertIn("raw attachment contents", script)
+        self.assertIn("Answer the owner-approved request as asked", script)
+        self.assertIn("Use email evidence and attachments as needed", script)
+        self.assertNotIn("Search only the last 1 year of email history.", script)
+        self.assertNotIn("Read at most 3 attachments total", script)
+        self.assertNotIn("raw attachment contents", script)
         self.assertIn("answer, supporting_context, why_these_emails, references.", script)
         self.assertIn("lookup returned no supporting references", script)
         self.assertIn('"low"', script)
@@ -659,15 +656,9 @@ class HostControllerTests(unittest.TestCase):
                 "{request_path}",
             )
             self.assertEqual(shared_access_config["capabilities"], ["email_intro_lookup"])
-            self.assertEqual(
-                shared_access_config["email_intro_lookup"]["allowedRecipientFilters"],
-                [
-                    "leads@tribecap.co",
-                    "portfolio-passive@tribecap.co",
-                    "portfolio-active@tribecap.co",
-                    "crypto-passive@tribecap.co",
-                    "crypto@tribecap.co",
-                ],
+            self.assertNotIn(
+                "allowedRecipientFilters",
+                shared_access_config["email_intro_lookup"],
             )
             self.assertTrue((mount_dir / "usr/local/bin/openclaw-shared-access").exists())
             self.assertTrue((mount_dir / "usr/local/bin/company-email-intro-lookup").exists())

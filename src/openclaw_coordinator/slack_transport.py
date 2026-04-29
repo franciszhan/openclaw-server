@@ -141,22 +141,13 @@ class SlackSocketModeRunner:
             return
         event_type = str(event.get("type", ""))
         if event_type == "app_mention":
-            channel_id = str(event.get("channel") or "")
-            if not self._is_allowed_public_channel(channel_id):
+            requester = str(event.get("user") or "")
+            if requester:
                 self.api.post_message(
-                    channel_id,
-                    self._public_channel_denied_text(),
-                    thread_ts=str(event.get("thread_ts") or event.get("ts") or ""),
+                    requester,
+                    "Please DM me to start shared lookup requests. I will keep the request, approval, and result in DMs.",
                 )
-                return
-            coordinator_event = {
-                "event_id": payload.get("event_id") or event.get("client_msg_id") or event.get("ts"),
-                "requester_slack_user_id": event.get("user"),
-                "channel_id": channel_id,
-                "thread_ts": event.get("thread_ts") or event.get("ts"),
-                "text": event.get("text", ""),
-                "entrypoint": "public_thread",
-            }
+            return
         elif event_type == "message" and event.get("channel_type") == "im":
             command = parse_dm_command(str(event.get("text", "")))
             if command is not None:
@@ -167,12 +158,14 @@ class SlackSocketModeRunner:
                     command=command,
                 )
                 return
-            self.api.post_message(
-                str(event.get("channel") or ""),
-                "New shared lookup requests must start in the rollout channel. DMs are only used for approvals and review.",
-                thread_ts=str(event.get("thread_ts") or event.get("ts") or ""),
-            )
-            return
+            coordinator_event = {
+                "event_id": payload.get("event_id") or event.get("client_msg_id") or event.get("ts"),
+                "requester_slack_user_id": event.get("user"),
+                "channel_id": event.get("channel"),
+                "thread_ts": event.get("thread_ts") or "",
+                "text": event.get("text", ""),
+                "entrypoint": "dm",
+            }
         else:
             return
         LOGGER.info(
@@ -184,7 +177,7 @@ class SlackSocketModeRunner:
         self._run_coordinator_action(
             lambda: self.service.submit_slack_request(coordinator_event),
             channel_id=str(coordinator_event["channel_id"]),
-            thread_ts=str(coordinator_event["thread_ts"]),
+            thread_ts=str(coordinator_event["thread_ts"]) or None,
         )
 
     def _handle_dm_command(
@@ -240,7 +233,7 @@ class SlackSocketModeRunner:
             decision = "approve" if action_id.endswith("approve") else "reject"
             LOGGER.info("received owner decision action %s from %s", decision, user_id)
             ack_text = (
-                "Approval received. Running the scoped lookup now."
+                "Approval received. Running the lookup and sending the result to the requester."
                 if decision == "approve"
                 else "Rejection received. Closing this request."
             )
@@ -265,7 +258,7 @@ class SlackSocketModeRunner:
             decision = "publish" if action_id.endswith("publish") else "cancel"
             LOGGER.info("received owner review action %s from %s", decision, user_id)
             ack_text = (
-                "Publish received. Finalizing the public reply."
+                "Publish received. Sending the result to the requester."
                 if decision == "publish"
                 else "Cancel received. Closing this request."
             )
@@ -381,17 +374,17 @@ class SlackSocketModeRunner:
         kind = str(action["kind"])
         text = str(action["text"])
         if kind in {
-            "public_ack",
-            "public_rejected",
-            "public_failed",
-            "public_cancelled",
-            "public_published",
+            "requester_dm_ack",
+            "requester_dm_rejected",
+            "requester_dm_failed",
+            "requester_dm_cancelled",
+            "requester_dm_published",
         }:
             self.api.post_message(
                 str(action["channel_id"]),
                 text,
                 thread_ts=str(action["thread_ts"]) if action.get("thread_ts") else None,
-                blocks=self._public_blocks(request, kind, text),
+                blocks=self._requester_blocks(request, kind, text),
             )
             return
         if kind == "owner_dm_approval":
@@ -415,13 +408,13 @@ class SlackSocketModeRunner:
         record = RequestRecord.from_dict(request)
         status = record.status
         if status == "executing":
-            text = f"Request `{record.request_id}` approved. Running the scoped lookup now."
+            text = f"Request `{record.request_id}` approved. Running the lookup now."
         elif status == "owner_review_pending":
             text = f"Request `{record.request_id}` approved. Review the result below."
         elif status == "owner_rejected":
             text = f"Request `{record.request_id}` rejected."
         elif status == "published":
-            text = f"Request `{record.request_id}` published."
+            text = f"Request `{record.request_id}` completed and sent to the requester."
         elif status == "failed":
             user_error = ""
             if isinstance(record.result_metadata, dict):
@@ -432,25 +425,13 @@ class SlackSocketModeRunner:
             text = f"Request `{record.request_id}` is now `{status}`."
         return text, [_section_block(text)]
 
-    def _public_blocks(
+    def _requester_blocks(
         self,
         request: dict[str, Any],
         action_kind: str,
         text: str,
     ) -> list[dict[str, Any]] | None:
         return None
-
-    def _is_allowed_public_channel(self, channel_id: str) -> bool:
-        allowed = set(self.config.allowed_public_channel_ids)
-        if not allowed:
-            return False
-        return channel_id in allowed
-
-    def _public_channel_denied_text(self) -> str:
-        allowed = self.config.allowed_public_channel_ids
-        if len(allowed) == 1:
-            return f"AgentCoordinator only accepts new requests in <#{allowed[0]}>."
-        return "AgentCoordinator only accepts new requests in the configured rollout channels."
 
     def _owner_approval_blocks(
         self,

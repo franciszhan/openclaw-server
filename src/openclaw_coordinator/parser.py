@@ -6,48 +6,9 @@ from .models import ParsedRequest
 
 
 MENTION_PATTERN = re.compile(r"<@([A-Z0-9]+)>")
-BLOCKED_SCOPE_PHRASES = (
-    "all emails",
-    "every email",
-    "entire inbox",
-    "full mailbox",
-    "entire mailbox",
-    "full inbox",
-    "everything in",
-)
-BLOCKED_EXPORT_PHRASES = (
-    "forward me",
-    "forward the email",
-    "forward the attachment",
-    "send me the email",
-    "send me the attachment",
-    "show me the raw email",
-    "show me the attachment",
-    "paste the email",
-    "verbatim",
-    "full thread",
-    "entire thread",
-    "download",
-    "export",
-    "cc me",
-)
-BLOCKED_SENSITIVE_PHRASES = (
-    "personal email",
-    "private email",
-    "salary",
-    "payroll",
-    "social security",
-    "ssn",
-    "bank account",
-    "wire instructions",
-    "tax return",
-    "medical",
-    "health insurance",
-    "passport",
-)
 
 
-def parse_public_request(
+def parse_slack_request(
     *,
     text: str,
     requester_slack_user_id: str,
@@ -64,7 +25,6 @@ def parse_public_request(
     )
     normalized = normalize_request_text(text)
     entity_name = _extract_entity_name(normalized)
-    validate_lookup_request(normalized.lower(), entity_name=entity_name)
     entity_company = _extract_entity_company(normalized)
     return ParsedRequest(
         owner_slack_user_id=owner_slack_user_id,
@@ -74,6 +34,23 @@ def parse_public_request(
         entity_company=entity_company,
         purpose=normalized,
         raw_text=text,
+    )
+
+
+def parse_public_request(
+    *,
+    text: str,
+    requester_slack_user_id: str,
+    coordinator_slack_user_id: str | None = None,
+    owner_aliases: dict[str, str] | None = None,
+    allow_requester_as_owner: bool = False,
+) -> ParsedRequest:
+    return parse_slack_request(
+        text=text,
+        requester_slack_user_id=requester_slack_user_id,
+        coordinator_slack_user_id=coordinator_slack_user_id,
+        owner_aliases=owner_aliases,
+        allow_requester_as_owner=allow_requester_as_owner,
     )
 
 
@@ -90,8 +67,6 @@ def extract_owner_slack_user_id(
     for mention in mentions:
         if mention == coordinator_slack_user_id:
             continue
-        if mention == requester_slack_user_id and not allow_requester_as_owner:
-            continue
         candidate_mentions.append(mention)
     if candidate_mentions:
         return candidate_mentions[-1]
@@ -106,22 +81,15 @@ def normalize_request_text(text: str) -> str:
 
 
 def validate_lookup_request(lowered: str, *, entity_name: str | None = None) -> None:
-    if any(phrase in lowered for phrase in BLOCKED_SCOPE_PHRASES):
-        raise ValueError("request is broader than the allowed scoped email lookup")
-    if any(phrase in lowered for phrase in BLOCKED_EXPORT_PHRASES):
-        raise ValueError("request asks for raw email content or forwarding, which is not allowed")
-    if any(phrase in lowered for phrase in BLOCKED_SENSITIVE_PHRASES):
-        raise ValueError("request appears to target sensitive or off-topic email content")
-    if entity_name and entity_name != "unspecified topic":
-        return
-    raise ValueError("request must ask a firm-relevant shared email question")
+    # Compatibility shim: request content is no longer rejected before owner approval.
+    return None
 
 
 def _extract_entity_name(text: str) -> str:
     patterns = [
         r"(?:look up|lookup|find|search|summari[sz]e)\s+(?:emails?\s+)?(?:related to|about|for)\s+(?P<entity>.+?)(?: for me| and summarize| and tell me| from email| in email|\?|$)",
-        r"(?:emails?\s+for|emails?\s+about|emails?\s+related to)\s+(?P<entity>.+?)(?: for me| and summarize| and tell me|\?|$)",
-        r"(?:latest|recent)\s+(?:info(?:rmation)?|context|update)\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
+        r"(?:latest|recent)\s+(?:info(?:rmation)?|context|updates?)\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
+        r"(?:emails?\s+for|emails?\s+about|emails?\s+related to)\s+(?:the\s+)?(?:(?:latest|recent)\s+(?:info(?:rmation)?|context|updates?)\s+(?:on|about|for)\s+)?(?P<entity>.+?)(?: for me| and summarize| and tell me|\?|$)",
         r"(?:what(?:'s| is)?|whats)\s+(?:the\s+)?latest\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
         r"(?:what(?:'s| is)?|whats)\s+new\s+(?:on|about|for)\s+(?P<entity>.+?)(?: from email| in email| and summarize| and tell me|\?|$)",
         r"(?:did\s+(?:we|anyone)|have\s+we|has\s+anyone)\s+(?:pass on|passed on|decline|declined|flag|flagged|discuss|review|mention)\s+(?P<entity>.+?)(?:\?|$)",

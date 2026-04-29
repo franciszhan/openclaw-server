@@ -12,7 +12,6 @@ class CoordinatorConfig:
     state_root: Path
     relay_command: list[str]
     coordinator_slack_user_id: str | None
-    allowed_public_channel_ids: list[str]
     request_timeout_seconds: int
     intent_extractor_model: str
     intent_extractor_api_key_env: str
@@ -39,9 +38,6 @@ class CoordinatorConfig:
                 if data.get("coordinator_slack_user_id")
                 else None
             ),
-            allowed_public_channel_ids=[
-                str(value) for value in data.get("allowed_public_channel_ids", [])
-            ],
             request_timeout_seconds=int(data.get("request_timeout_seconds", 60)),
             intent_extractor_model=str(data.get("intent_extractor_model", "gpt-5-nano")),
             intent_extractor_api_key_env=str(
