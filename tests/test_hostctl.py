@@ -199,6 +199,7 @@ class HostControllerTests(unittest.TestCase):
         self.assertIn("answer, supporting_context, why_these_emails, references.", script)
         self.assertIn("google-auth-status", script)
         self.assertIn("google email access is not connected", script)
+        self.assertIn("openclaw gateway admin access is not paired", script)
         self.assertIn("lookup returned no supporting references", script)
         self.assertIn('"low"', script)
 
@@ -980,6 +981,47 @@ class HostControllerTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("google email access is not connected", stderr.getvalue())
+
+    def test_shared_access_preflights_guest_gateway_admin_pairing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            config.user_dir("jon").mkdir(parents=True, exist_ok=True)
+            config.automation_ssh_private_key_path.write_text("PRIVATE KEY\n", encoding="utf-8")
+            save_user_record(
+                config.user_record_path("jon"),
+                UserRecord(
+                    user_id="jon",
+                    display_name="Jon",
+                    machine_name="openclaw-jon",
+                    ip_address="172.31.0.17",
+                    mac_address="06:00:ac:1f:00:11",
+                    tap_name="ocjon",
+                    rootfs_path=str(config.user_rootfs_path("jon")),
+                    created_at="2026-03-10T00:00:00Z",
+                ),
+            )
+            controller = HostController(config)
+            gateway_failure = subprocess.CompletedProcess(
+                args=["ssh"],
+                returncode=1,
+                stdout="",
+                stderr="openclaw gateway admin access is not paired\n",
+            )
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch.object(
+                    controller,
+                    "google_auth_status",
+                    return_value={"connected": True, "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]},
+                ),
+                mock.patch("openclaw_hostctl.hostctl.subprocess.run", return_value=gateway_failure),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "gateway admin access is not paired"):
+                    controller.execute_shared_access(
+                        "jon",
+                        {"action_type": "email_intro_lookup"},
+                    )
 
 
 class FirecrackerTests(unittest.TestCase):

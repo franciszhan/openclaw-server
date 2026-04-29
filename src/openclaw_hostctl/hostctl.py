@@ -523,6 +523,9 @@ class HostController:
     ) -> dict[str, object]:
         require_root()
         user = self._load_user(user_id)
+        private_key = self.config.automation_ssh_private_key_path
+        if not private_key or not private_key.exists():
+            raise FileNotFoundError("automation SSH private key is not configured")
         if str(request.get("action_type") or "") == "email_intro_lookup":
             google_status = self.google_auth_status(user_id)
             if not google_status.get("connected"):
@@ -533,9 +536,7 @@ class HostController:
                         "then run `finish-google \"<callback_url>\"`."
                     )
                 raise RuntimeError(f"google email access is not connected. {next_step.strip()}")
-        private_key = self.config.automation_ssh_private_key_path
-        if not private_key or not private_key.exists():
-            raise FileNotFoundError("automation SSH private key is not configured")
+            self._assert_guest_gateway_admin_paired(user, private_key)
         self.config.shared_access_root.mkdir(parents=True, exist_ok=True)
         self.config.shared_access_known_hosts_path.touch(exist_ok=True)
         command = [
@@ -563,6 +564,51 @@ class HostController:
             timeout=timeout_seconds,
         )
         return json.loads(result.stdout)
+
+    def _assert_guest_gateway_admin_paired(self, user: UserRecord, private_key: Path) -> None:
+        script = r"""
+const fs = require("fs");
+const path = "/home/admin/.openclaw/devices/paired.json";
+const paired = JSON.parse(fs.readFileSync(path, "utf8"));
+const values = Object.values(paired || {});
+const hasAdmin = values.some((device) => {
+  const scopes = [
+    ...(Array.isArray(device.scopes) ? device.scopes : []),
+    ...(Array.isArray(device.approvedScopes) ? device.approvedScopes : []),
+  ];
+  return scopes.includes("operator.admin");
+});
+if (!hasAdmin) {
+  process.stderr.write("openclaw gateway admin access is not paired\n");
+  process.exit(1);
+}
+"""
+        result = subprocess.run(
+            [
+                "ssh",
+                "-i",
+                str(private_key),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                f"UserKnownHostsFile={self.config.shared_access_known_hosts_path}",
+                "-o",
+                "ConnectTimeout=10",
+                f"admin@{user.ip_address}",
+                "node",
+                "-e",
+                shlex.quote(script),
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            failure = result.stderr.strip() or result.stdout.strip() or "openclaw gateway admin access is not paired"
+            raise RuntimeError(failure)
 
     def _sync_coordinator_directory_from_manifest(
         self,
@@ -1967,6 +2013,27 @@ function requireGoogleConnected(env) {
   }
 }
 
+function requireGatewayAdminPaired() {
+  const path = "/home/admin/.openclaw/devices/paired.json";
+  let paired;
+  try {
+    paired = JSON.parse(fs.readFileSync(path, "utf8"));
+  } catch {
+    fail("openclaw gateway admin access is not paired");
+  }
+  const values = Object.values(paired || {});
+  const hasAdmin = values.some((device) => {
+    const scopes = [
+      ...(Array.isArray(device.scopes) ? device.scopes : []),
+      ...(Array.isArray(device.approvedScopes) ? device.approvedScopes : []),
+    ];
+    return scopes.includes("operator.admin");
+  });
+  if (!hasAdmin) {
+    fail("openclaw gateway admin access is not paired");
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv);
   const request = JSON.parse(fs.readFileSync(args["--request"], "utf8"));
@@ -1976,6 +2043,7 @@ function main() {
     HOME: "/home/admin",
   };
   requireGoogleConnected(env);
+  requireGatewayAdminPaired();
   const prompt = [
     "You are an owner-approved email question answering tool.",
     "Use only the local user's email access and only what is needed to answer the specific request.",

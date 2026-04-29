@@ -414,6 +414,11 @@ def classify_execution_failure(failure_reason: str) -> str:
             "complete the browser consent flow, then run `finish-google \"<callback_url>\"`, "
             "and try again."
         )
+    if "openclaw gateway admin access is not paired" in lowered or "pairing required" in lowered:
+        return (
+            "The email owner's OpenClaw gateway is not paired for local email access yet. "
+            "Ask them or ops to repair the VM gateway pairing, then try again."
+        )
     if "lookup returned no supporting references" in lowered:
         return (
             "The shared email request completed, but it did not find enough supporting emails to answer confidently."

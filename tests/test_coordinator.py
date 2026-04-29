@@ -58,6 +58,15 @@ class GoogleDisconnectedExecutor:
         )
 
 
+class GatewayPairingExecutor:
+    def execute(self, owner: DirectoryEntry, request) -> dict[str, object]:
+        raise __import__("subprocess").CalledProcessError(
+            1,
+            ["openclaw-hostctl", "shared-access", "execute", owner.vm_user_id],
+            stderr="openclaw gateway admin access is not paired",
+        )
+
+
 class FakeIntentExtractor:
     def extract(
         self,
@@ -293,6 +302,27 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(failed["request"]["status"], "failed")
         self.assertIn("Gmail is not connected", failed["actions"][0]["text"])
         self.assertIn("connect-google", failed["request"]["result_metadata"]["user_error"])
+
+    def test_gateway_pairing_gets_specific_failure_message(self) -> None:
+        service = CoordinatorService(
+            example_config(self.state_root),
+            self.store,
+            GatewayPairingExecutor(),  # type: ignore[arg-type]
+            intent_extractor=FakeIntentExtractor(),
+        )
+        submit = service.submit_dm_request(
+            {
+                "event_id": "evt-gateway-pairing",
+                "requester_slack_user_id": "UREQUEST",
+                "channel_id": "DREQ",
+                "thread_ts": "",
+                "text": "<@UCOORD> can <@UOWNER> look up emails about EJJ Capital?",
+            }
+        )
+        failed = service.prepare_owner_approval(submit["request"]["request_id"])
+        self.assertEqual(failed["request"]["status"], "failed")
+        self.assertIn("OpenClaw gateway is not paired", failed["actions"][0]["text"])
+        self.assertIn("gateway pairing", failed["request"]["result_metadata"]["user_error"])
 
     def test_owner_approve_publishes_precomputed_result_to_requester_dm(self) -> None:
         submit = self.service.submit_dm_request(

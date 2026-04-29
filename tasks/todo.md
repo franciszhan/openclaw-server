@@ -151,3 +151,12 @@
 - [x] Add a host-relay Gmail connection preflight so existing VMs get the clearer failure without guest refresh.
 - [x] Classify disconnected Gmail separately from true empty email-search results.
 - [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.
+
+## Shared Access Gateway Pairing Fix
+
+- [x] Inspect latest Jon request `56e5f03354e7` and confirm it targeted `jon` for `ejj capital`.
+- [x] Confirm Jon's Google auth is connected, so the failure was not Gmail OAuth.
+- [x] Inspect Jon's OpenClaw session metadata and identify `pairing required` gateway failures during local email access.
+- [x] Add host-relay and guest-helper preflights for `operator.admin` gateway pairing.
+- [x] Classify gateway pairing failures separately from true empty email-search results.
+- [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.
