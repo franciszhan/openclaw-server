@@ -2072,8 +2072,6 @@ function main() {
       "openclaw",
       [
         "agent",
-        "--agent",
-        "main",
         "--local",
         "--session-id",
         sessionId,
