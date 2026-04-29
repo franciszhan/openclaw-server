@@ -330,7 +330,7 @@ Minimal Slack app requirements for coordinator testing:
 - events:
   - `message.im`
 
-New shared-access requests start by DMing the coordinator bot. The coordinator does not accept public-channel requests; if `app_mention` events are enabled for convenience, public mentions are only used to nudge the requester back to DM. For email lookups, the owner approves or rejects once; approval runs the lookup and sends the result to the requester without a second publish step.
+New shared-access requests start by DMing the coordinator bot. The coordinator does not accept public-channel requests; if `app_mention` events are enabled for convenience, public mentions are only used to nudge the requester back to DM. For email lookups, the coordinator runs the lookup first, sends the generated result to the owner for one approval, and approval sends that content to the requester without a second publish step.
 
 Initialize state and register each opted-in owner manifest:
 

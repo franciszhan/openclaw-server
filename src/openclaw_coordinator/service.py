@@ -125,7 +125,7 @@ class CoordinatorService:
             entity_name=parsed.entity_name,
             entity_company=parsed.entity_company,
             purpose=parsed.purpose,
-            status="pending_owner_approval",
+            status="executing",
             response_channel_id=str(event["channel_id"]),
             response_thread_ts=str(event["thread_ts"]),
             raw_text=parsed.raw_text,
@@ -134,30 +134,65 @@ class CoordinatorService:
         )
         self.store.save_request(record)
         self._audit("request_submitted", record)
+        try:
+            result = self.executor.execute(owner, record)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+            failure_text = extract_failure_text(error)
+            user_error = classify_execution_failure(failure_text)
+            failed = replace(
+                record,
+                status="failed",
+                failure_reason=failure_text,
+                result_metadata={"user_error": user_error},
+                updated_at=timestamp_now(),
+            )
+            self.store.save_request(failed)
+            self._audit("execution_failed", failed)
+            actions = [
+                CoordinatorAction(
+                    kind="requester_dm_failed",
+                    request_id=failed.request_id,
+                    channel_id=failed.response_channel_id,
+                    thread_ts=failed.response_thread_ts,
+                    text=user_error,
+                )
+            ]
+            return {"request": failed.to_dict(), "actions": [action.to_dict() for action in actions]}
+
+        approval_ready = replace(
+            record,
+            status="pending_owner_approval",
+            updated_at=timestamp_now(),
+            result=result,
+        )
+        self.store.save_request(approval_ready)
+        self._audit("owner_approval_pending", approval_ready)
         requester_display = requester.display_name if requester else f"<@{requester_slack_user_id}>"
         actions = [
             CoordinatorAction(
                 kind="requester_dm_ack",
-                request_id=record.request_id,
-                channel_id=record.response_channel_id,
-                thread_ts=record.response_thread_ts,
+                request_id=approval_ready.request_id,
+                channel_id=approval_ready.response_channel_id,
+                thread_ts=approval_ready.response_thread_ts,
                 text=(
-                    f"Request `{record.request_id}` sent to {owner.display_name} for approval."
+                    f"Request `{approval_ready.request_id}` is ready for {owner.display_name}'s approval."
                 ),
             ),
             CoordinatorAction(
                 kind="owner_dm_approval",
-                request_id=record.request_id,
+                request_id=approval_ready.request_id,
                 slack_user_id=owner.slack_user_id,
                 text=(
                     f"{requester_display} requested a shared email question for "
-                    f"`{record.entity_name}`.\n\n"
-                    f"Request ID: `{record.request_id}`\n"
-                    f"Reply with `approve {record.request_id}` or `reject {record.request_id}`."
+                    f"`{approval_ready.entity_name}`.\n\n"
+                    f"Request ID: `{approval_ready.request_id}`\n"
+                    f"{format_preview_result(approval_ready)}\n\n"
+                    f"Reply with `approve {approval_ready.request_id}` to send this result, "
+                    f"or `reject {approval_ready.request_id}`."
                 ),
             ),
         ]
-        return {"request": record.to_dict(), "actions": [action.to_dict() for action in actions]}
+        return {"request": approval_ready.to_dict(), "actions": [action.to_dict() for action in actions]}
 
     def submit_dm_request(self, event: dict[str, object]) -> dict[str, object]:
         dm_event = dict(event)
@@ -202,43 +237,14 @@ class CoordinatorService:
         if decision != "approve":
             raise ValueError("decision must be approve or reject")
 
-        owner = self.store.get_directory_entry(record.owner_slack_user_id)
-        if owner is None:
-            raise ValueError("owner is no longer registered")
-        approved = replace(record, status="executing", owner_decided_at=now, updated_at=now)
-        self.store.save_request(approved)
-        self._audit("owner_approved", approved)
-        try:
-            result = self.executor.execute(owner, approved)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
-            failure_text = extract_failure_text(error)
-            user_error = classify_execution_failure(failure_text)
-            failed = replace(
-                approved,
-                status="failed",
-                failure_reason=failure_text,
-                result_metadata={"user_error": user_error},
-                updated_at=timestamp_now(),
-            )
-            self.store.save_request(failed)
-            self._audit("execution_failed", failed)
-            actions = [
-                CoordinatorAction(
-                    kind="requester_dm_failed",
-                    request_id=failed.request_id,
-                    channel_id=failed.response_channel_id,
-                    thread_ts=failed.response_thread_ts,
-                    text=user_error,
-                )
-            ]
-            return {"request": failed.to_dict(), "actions": [action.to_dict() for action in actions]}
-
+        if record.result is None:
+            raise ValueError("request has no generated lookup result to approve")
         completed_at = timestamp_now()
         published = replace(
-            approved,
+            record,
             status="published",
             updated_at=completed_at,
-            result=result,
+            owner_decided_at=completed_at,
             published_at=completed_at,
         )
         self.store.save_request(published)

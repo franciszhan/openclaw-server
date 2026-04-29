@@ -110,6 +110,46 @@ class SlackTransportDmOnlyTests(unittest.TestCase):
         self.assertEqual(self.service.submitted_events[0]["thread_ts"], "")
         self.assertEqual(self.runner.api.messages, [])
 
+    def test_owner_approval_blocks_include_generated_result(self) -> None:
+        blocks = self.runner._owner_approval_blocks(
+            {
+                "request_id": "abc123def456",
+                "source_event_id": "evt-approval",
+                "requester_slack_user_id": "UREQUEST",
+                "requester_vm_user_id": None,
+                "owner_slack_user_id": "UOWNER",
+                "owner_vm_user_id": "francis",
+                "action_type": "email_intro_lookup",
+                "mode": "read_only",
+                "entity_name": "EDG",
+                "entity_company": None,
+                "purpose": "latest updates on EDG",
+                "status": "pending_owner_approval",
+                "response_channel_id": "DREQ",
+                "response_thread_ts": "",
+                "raw_text": "latest updates on EDG",
+                "created_at": "2026-04-29T20:00:00Z",
+                "updated_at": "2026-04-29T20:01:00Z",
+                "result": {
+                    "answer": "EDG has new traction.",
+                    "supporting_context": "Two recent threads mention updates.",
+                    "why_these_emails": "They are the most recent relevant emails.",
+                    "references": [],
+                },
+                "result_metadata": {},
+            },
+            "approval text",
+        )
+        block_text = "\n".join(
+            block.get("text", {}).get("text", "")
+            for block in blocks
+            if isinstance(block.get("text"), dict)
+        )
+        self.assertIn("Generated result awaiting approval", block_text)
+        self.assertIn("EDG has new traction.", block_text)
+        actions = [block for block in blocks if block.get("type") == "actions"][0]
+        self.assertEqual(actions["elements"][0]["text"]["text"], "Approve & Send")
+
     def test_config_can_read_slack_tokens_from_env(self) -> None:
         with mock.patch.dict(
             os.environ,

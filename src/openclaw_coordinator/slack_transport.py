@@ -233,7 +233,7 @@ class SlackSocketModeRunner:
             decision = "approve" if action_id.endswith("approve") else "reject"
             LOGGER.info("received owner decision action %s from %s", decision, user_id)
             ack_text = (
-                "Approval received. Running the lookup and sending the result to the requester."
+                "Approval received. Sending the generated result to the requester."
                 if decision == "approve"
                 else "Rejection received. Closing this request."
             )
@@ -408,7 +408,7 @@ class SlackSocketModeRunner:
         record = RequestRecord.from_dict(request)
         status = record.status
         if status == "executing":
-            text = f"Request `{record.request_id}` approved. Running the lookup now."
+            text = f"Request `{record.request_id}` is running the lookup before owner approval."
         elif status == "owner_review_pending":
             text = f"Request `{record.request_id}` approved. Review the result below."
         elif status == "owner_rejected":
@@ -438,13 +438,14 @@ class SlackSocketModeRunner:
         request: dict[str, Any],
         text: str,
     ) -> list[dict[str, Any]]:
+        record = RequestRecord.from_dict(request)
         entity_name = str(request.get("entity_name") or "unspecified contact")
         purpose = str(request.get("purpose") or "").strip()
-        return [
+        blocks: list[dict[str, Any]] = [
             _section_block(
                 "*Shared Email Request*\n"
                 f"<@{request['requester_slack_user_id']}> requested "
-                "a shared email question."
+                "a shared email question. Review the generated result before approving."
             ),
             {
                 "type": "section",
@@ -462,13 +463,22 @@ class SlackSocketModeRunner:
                 ],
             },
             _section_block(f"*Purpose:*\n{purpose[:2500]}"),
+        ]
+        if record.result:
+            blocks.append(
+                _section_block(
+                    "*Generated result awaiting approval*\n"
+                    f"{format_preview_text(record)}"
+                )
+            )
+        blocks.append(
             {
                 "type": "actions",
                 "elements": [
                     {
                         "type": "button",
                         "action_id": "owner_decision_approve",
-                        "text": {"type": "plain_text", "text": "Approve"},
+                        "text": {"type": "plain_text", "text": "Approve & Send"},
                         "style": "primary",
                         "value": json.dumps({"request_id": request["request_id"]}),
                     },
@@ -481,7 +491,8 @@ class SlackSocketModeRunner:
                     },
                 ],
             },
-        ]
+        )
+        return blocks
 
     def _owner_review_blocks(
         self,

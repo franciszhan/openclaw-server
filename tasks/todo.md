@@ -113,3 +113,10 @@
 - [x] Add a regression for `hey spark, can you check @Francis Zhan email for the latest updates on EDG?`.
 - [x] Parse `latest updates on <entity>` before generic `email for <entity>` so the fallback entity is `EDG`.
 - [x] Verify with `PYTHONPATH=src python3 -m unittest tests.test_coordinator`, `make test`, `PYTHONPATH=src python3 -m compileall src tests`, and `make validate`.
+
+## AgentCoordinator Content Approval Fix
+
+- [x] Move email lookup execution to request submission so the owner approval includes generated content.
+- [x] Change owner approval to publish the stored result without running the lookup again.
+- [x] Update Slack approval blocks to include the generated result and label the primary action `Approve & Send`.
+- [x] Update docs to describe content approval rather than pre-run approval.
