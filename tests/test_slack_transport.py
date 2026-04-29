@@ -34,6 +34,35 @@ class FakeService:
         return {"request": {"request_id": "req-1", "status": "pending_owner_approval"}, "actions": []}
 
 
+def approval_request(status: str = "pending_owner_approval") -> dict[str, object]:
+    return {
+        "request_id": "abc123def456",
+        "source_event_id": "evt-approval",
+        "requester_slack_user_id": "UREQUEST",
+        "requester_vm_user_id": None,
+        "owner_slack_user_id": "UOWNER",
+        "owner_vm_user_id": "francis",
+        "action_type": "email_intro_lookup",
+        "mode": "read_only",
+        "entity_name": "EDG",
+        "entity_company": None,
+        "purpose": "latest updates on EDG",
+        "status": status,
+        "response_channel_id": "DREQ",
+        "response_thread_ts": "",
+        "raw_text": "latest updates on EDG",
+        "created_at": "2026-04-29T20:00:00Z",
+        "updated_at": "2026-04-29T20:01:00Z",
+        "result": {
+            "answer": "EDG has new traction.",
+            "supporting_context": "Two recent threads mention updates.",
+            "why_these_emails": "They are the most recent relevant emails.",
+            "references": [],
+        },
+        "result_metadata": {},
+    }
+
+
 def example_config() -> CoordinatorConfig:
     return CoordinatorConfig(
         state_root=Path("/tmp/coordinator-state"),
@@ -112,32 +141,7 @@ class SlackTransportDmOnlyTests(unittest.TestCase):
 
     def test_owner_approval_blocks_include_generated_result(self) -> None:
         blocks = self.runner._owner_approval_blocks(
-            {
-                "request_id": "abc123def456",
-                "source_event_id": "evt-approval",
-                "requester_slack_user_id": "UREQUEST",
-                "requester_vm_user_id": None,
-                "owner_slack_user_id": "UOWNER",
-                "owner_vm_user_id": "francis",
-                "action_type": "email_intro_lookup",
-                "mode": "read_only",
-                "entity_name": "EDG",
-                "entity_company": None,
-                "purpose": "latest updates on EDG",
-                "status": "pending_owner_approval",
-                "response_channel_id": "DREQ",
-                "response_thread_ts": "",
-                "raw_text": "latest updates on EDG",
-                "created_at": "2026-04-29T20:00:00Z",
-                "updated_at": "2026-04-29T20:01:00Z",
-                "result": {
-                    "answer": "EDG has new traction.",
-                    "supporting_context": "Two recent threads mention updates.",
-                    "why_these_emails": "They are the most recent relevant emails.",
-                    "references": [],
-                },
-                "result_metadata": {},
-            },
+            approval_request(),
             "approval text",
         )
         block_text = "\n".join(
@@ -149,6 +153,58 @@ class SlackTransportDmOnlyTests(unittest.TestCase):
         self.assertIn("EDG has new traction.", block_text)
         actions = [block for block in blocks if block.get("type") == "actions"][0]
         self.assertEqual(actions["elements"][0]["text"]["text"], "Approve & Send")
+
+    def test_run_coordinator_action_posts_ack_before_running_lookup(self) -> None:
+        class QueuedLookupService:
+            def __init__(self) -> None:
+                self.prepare_calls: list[str] = []
+
+            def prepare_owner_approval(self, request_id: str):
+                self.prepare_calls.append(request_id)
+                request = approval_request()
+                return {
+                    "request": request,
+                    "actions": [
+                        {
+                            "kind": "owner_dm_approval",
+                            "request_id": request_id,
+                            "slack_user_id": "UOWNER",
+                            "text": "Owner approval text",
+                            "channel_id": None,
+                            "thread_ts": None,
+                        }
+                    ],
+                }
+
+        service = QueuedLookupService()
+        runner = SlackSocketModeRunner(example_config(), service)  # type: ignore[arg-type]
+        runner.api = FakeApi()  # type: ignore[assignment]
+        result = runner._run_coordinator_action(
+            lambda: {
+                "lookup_queued": True,
+                "request": {
+                    **approval_request(status="executing"),
+                    "result": None,
+                },
+                "actions": [
+                    {
+                        "kind": "requester_dm_ack",
+                        "request_id": "abc123def456",
+                        "channel_id": "DREQ",
+                        "thread_ts": "",
+                        "slack_user_id": None,
+                        "text": "Request queued.",
+                    }
+                ],
+            },
+            channel_id="DREQ",
+            thread_ts=None,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(service.prepare_calls, ["abc123def456"])
+        self.assertEqual([message["channel"] for message in runner.api.messages], ["DREQ", "UOWNER"])
+        self.assertEqual(runner.api.messages[0]["text"], "Request queued.")
+        self.assertEqual(runner.api.messages[1]["text"], "Owner approval text")
 
     def test_config_can_read_slack_tokens_from_env(self) -> None:
         with mock.patch.dict(

@@ -115,7 +115,7 @@ class CoordinatorServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_submit_request_creates_pending_owner_approval(self) -> None:
+    def test_submit_request_acknowledges_before_lookup_runs(self) -> None:
         result = self.service.submit_dm_request(
             {
                 "event_id": "evt-1",
@@ -126,16 +126,15 @@ class CoordinatorServiceTests(unittest.TestCase):
             }
         )
         request = result["request"]
-        self.assertEqual(request["status"], "pending_owner_approval")
+        self.assertEqual(request["status"], "executing")
         self.assertEqual(request["owner_slack_user_id"], "UOWNER")
         self.assertEqual(request["mode"], "read_only")
-        self.assertIsNotNone(request["result"])
-        self.assertEqual(len(result["actions"]), 2)
+        self.assertIsNone(request["result"])
+        self.assertTrue(result["lookup_queued"])
+        self.assertEqual(len(result["actions"]), 1)
         self.assertEqual(result["actions"][0]["kind"], "requester_dm_ack")
         self.assertEqual(result["actions"][0]["channel_id"], "DREQ")
-        self.assertEqual(result["actions"][1]["kind"], "owner_dm_approval")
-        self.assertIn("*Answer*", result["actions"][1]["text"])
-        self.assertEqual(len(self.executor.calls), 1)
+        self.assertEqual(len(self.executor.calls), 0)
 
     def test_duplicate_event_is_ignored(self) -> None:
         first = self.service.submit_dm_request(
@@ -179,7 +178,7 @@ class CoordinatorServiceTests(unittest.TestCase):
         request = result["request"]
         self.assertEqual(request["owner_slack_user_id"], "UREQUEST")
         self.assertEqual(request["requester_slack_user_id"], "UREQUEST")
-        self.assertEqual(request["status"], "pending_owner_approval")
+        self.assertEqual(request["status"], "executing")
 
     def test_non_opted_in_owner_is_routed_for_approval(self) -> None:
         self.service.upsert_directory_entry(
@@ -201,7 +200,7 @@ class CoordinatorServiceTests(unittest.TestCase):
                 "text": "<@UCOORD> can <@UDENY> look up emails about this founder?",
             }
         )
-        self.assertEqual(result["request"]["status"], "pending_owner_approval")
+        self.assertEqual(result["request"]["status"], "executing")
         self.assertEqual(result["request"]["owner_slack_user_id"], "UDENY")
 
     def test_unregistered_requester_is_routed_for_owner_approval(self) -> None:
@@ -214,7 +213,7 @@ class CoordinatorServiceTests(unittest.TestCase):
                 "text": "<@UCOORD> can <@UOWNER> find every email about 1Money?",
             }
         )
-        self.assertEqual(result["request"]["status"], "pending_owner_approval")
+        self.assertEqual(result["request"]["status"], "executing")
         self.assertEqual(result["request"]["requester_slack_user_id"], "UNEW")
         self.assertIsNone(result["request"]["requester_vm_user_id"])
         self.assertEqual(result["actions"][0]["kind"], "requester_dm_ack")
@@ -230,6 +229,7 @@ class CoordinatorServiceTests(unittest.TestCase):
             }
         )
         request_id = submit["request"]["request_id"]
+        self.service.prepare_owner_approval(request_id)
         result = self.service.record_owner_decision(
             request_id,
             owner_slack_user_id="UOWNER",
@@ -238,7 +238,7 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(result["request"]["status"], "owner_rejected")
         self.assertEqual(result["actions"][0]["kind"], "requester_dm_rejected")
 
-    def test_lookup_miss_gets_friendly_failure_message_before_owner_approval(self) -> None:
+    def test_lookup_miss_gets_friendly_failure_message_after_initial_ack(self) -> None:
         service = CoordinatorService(
             example_config(self.state_root),
             self.store,
@@ -254,10 +254,12 @@ class CoordinatorServiceTests(unittest.TestCase):
                 "text": "<@UCOORD> can <@UOWNER> look up emails about Rava Money?",
             }
         )
-        self.assertEqual(submit["request"]["status"], "failed")
-        self.assertIn("did not find enough supporting emails", submit["actions"][0]["text"])
-        self.assertEqual(submit["actions"][0]["kind"], "requester_dm_failed")
-        self.assertIn("did not find enough supporting emails", submit["request"]["result_metadata"]["user_error"])
+        self.assertEqual(submit["request"]["status"], "executing")
+        failed = service.prepare_owner_approval(submit["request"]["request_id"])
+        self.assertEqual(failed["request"]["status"], "failed")
+        self.assertIn("did not find enough supporting emails", failed["actions"][0]["text"])
+        self.assertEqual(failed["actions"][0]["kind"], "requester_dm_failed")
+        self.assertIn("did not find enough supporting emails", failed["request"]["result_metadata"]["user_error"])
 
     def test_owner_approve_publishes_precomputed_result_to_requester_dm(self) -> None:
         submit = self.service.submit_dm_request(
@@ -270,8 +272,14 @@ class CoordinatorServiceTests(unittest.TestCase):
             }
         )
         request_id = submit["request"]["request_id"]
-        self.assertEqual(submit["request"]["status"], "pending_owner_approval")
-        self.assertIsNotNone(submit["request"]["result"])
+        self.assertEqual(submit["request"]["status"], "executing")
+        self.assertIsNone(submit["request"]["result"])
+        self.assertEqual(len(self.executor.calls), 0)
+        prepared = self.service.prepare_owner_approval(request_id)
+        self.assertEqual(prepared["request"]["status"], "pending_owner_approval")
+        self.assertIsNotNone(prepared["request"]["result"])
+        self.assertEqual(prepared["actions"][0]["kind"], "owner_dm_approval")
+        self.assertIn("*Answer*", prepared["actions"][0]["text"])
         self.assertEqual(len(self.executor.calls), 1)
         approved = self.service.record_owner_decision(
             request_id,

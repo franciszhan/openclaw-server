@@ -120,3 +120,16 @@
 - [x] Change owner approval to publish the stored result without running the lookup again.
 - [x] Update Slack approval blocks to include the generated result and label the primary action `Approve & Send`.
 - [x] Update docs to describe content approval rather than pre-run approval.
+
+## AgentCoordinator Immediate Requester Ack
+
+- [x] Split request submission from queued lookup execution so Spark can acknowledge the requester before the lookup starts.
+- [x] Trigger the queued lookup after posting the requester ack, then DM the generated content to the owner for approval.
+- [x] Add transport coverage that requester ack is posted before owner approval preparation runs.
+- [x] Verify with full tests, compile checks, config validation, and whitespace checks.
+
+## AgentCoordinator Immediate Requester Ack Review
+
+- Successful DM requests now immediately tell the requester the lookup is queued for owner approval before the lookup execution begins.
+- Lookup execution still prepares the generated content before owner approval, so the single owner approval sends that already-reviewed content to the requester.
+- Verified locally with `make test`, `PYTHONPATH=src python3 -m compileall src tests`, `make validate`, and `git diff --check`.

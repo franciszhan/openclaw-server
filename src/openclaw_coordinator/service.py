@@ -134,6 +134,32 @@ class CoordinatorService:
         )
         self.store.save_request(record)
         self._audit("request_submitted", record)
+        actions = [
+            CoordinatorAction(
+                kind="requester_dm_ack",
+                request_id=record.request_id,
+                channel_id=record.response_channel_id,
+                thread_ts=record.response_thread_ts,
+                text=(
+                    f"Request `{record.request_id}` is queued for {owner.display_name}'s approval. "
+                    "I am running the lookup now and will send them the generated result to review."
+                ),
+            ),
+        ]
+        return {
+            "request": record.to_dict(),
+            "actions": [action.to_dict() for action in actions],
+            "lookup_queued": True,
+        }
+
+    def prepare_owner_approval(self, request_id: str) -> dict[str, object]:
+        record = self.store.load_request(request_id)
+        if record.status != "executing":
+            raise ValueError("request is not queued for lookup execution")
+        owner = self.store.get_directory_entry(record.owner_slack_user_id)
+        if owner is None:
+            raise ValueError("owner is no longer registered")
+        requester = self.store.get_directory_entry(record.requester_slack_user_id)
         try:
             result = self.executor.execute(owner, record)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
@@ -167,17 +193,8 @@ class CoordinatorService:
         )
         self.store.save_request(approval_ready)
         self._audit("owner_approval_pending", approval_ready)
-        requester_display = requester.display_name if requester else f"<@{requester_slack_user_id}>"
+        requester_display = requester.display_name if requester else f"<@{record.requester_slack_user_id}>"
         actions = [
-            CoordinatorAction(
-                kind="requester_dm_ack",
-                request_id=approval_ready.request_id,
-                channel_id=approval_ready.response_channel_id,
-                thread_ts=approval_ready.response_thread_ts,
-                text=(
-                    f"Request `{approval_ready.request_id}` is ready for {owner.display_name}'s approval."
-                ),
-            ),
             CoordinatorAction(
                 kind="owner_dm_approval",
                 request_id=approval_ready.request_id,

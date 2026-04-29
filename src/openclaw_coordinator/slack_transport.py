@@ -311,7 +311,23 @@ class SlackSocketModeRunner:
                 request.get("status"),
             )
         self._post_actions(result)
+        self._run_queued_lookup(result)
         return result
+
+    def _run_queued_lookup(self, result: dict[str, object]) -> None:
+        if not result.get("lookup_queued"):
+            return
+        request = result.get("request")
+        if not isinstance(request, dict):
+            return
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            return
+        self._run_coordinator_action(
+            lambda: self.service.prepare_owner_approval(request_id),
+            channel_id=str(request.get("response_channel_id") or ""),
+            thread_ts=str(request.get("response_thread_ts") or "") or None,
+        )
 
     def _refresh_interactive_message(
         self,

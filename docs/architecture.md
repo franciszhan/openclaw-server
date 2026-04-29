@@ -113,11 +113,12 @@ Execution path:
 
 1. A requester DMs the coordinator.
 2. The coordinator parses the request into a typed operation and routes it to the named owner.
-3. The coordinator calls the host relay.
-4. The host relay SSHes into the owner VM with a host-managed automation key.
-5. The owner VM runs only the typed shared-access helper, not the main personalized OpenClaw agent.
-6. The owner receives the generated result in DM and approves or rejects that content.
-7. The coordinator sends the approved result back to the requester by DM.
+3. The coordinator immediately acknowledges that the request is queued for owner approval.
+4. The coordinator calls the host relay.
+5. The host relay SSHes into the owner VM with a host-managed automation key.
+6. The owner VM runs only the typed shared-access helper, not the main personalized OpenClaw agent.
+7. The owner receives the generated result in DM and approves or rejects that content.
+8. The coordinator sends the approved result back to the requester by DM.
 
 Security properties:
 
