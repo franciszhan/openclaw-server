@@ -133,3 +133,11 @@
 - Successful DM requests now immediately tell the requester the lookup is queued for owner approval before the lookup execution begins.
 - Lookup execution still prepares the generated content before owner approval, so the single owner approval sends that already-reviewed content to the requester.
 - Verified locally with `make test`, `PYTHONPATH=src python3 -m compileall src tests`, `make validate`, and `git diff --check`.
+
+## Shared Access Error Propagation Fix
+
+- [x] Reproduce the prod failure behind request `239a388e5e2d`.
+- [x] Confirm the actual guest-helper failure was `lookup returned no supporting references`.
+- [x] Propagate shared-access helper stderr through `openclaw-hostctl shared-access execute`.
+- [x] Add regression coverage so coordinator failure classification receives the real helper reason.
+- [x] Verify with targeted tests, full tests, compile checks, config validation, and whitespace checks.

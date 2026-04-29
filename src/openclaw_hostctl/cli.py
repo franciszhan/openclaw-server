@@ -3,11 +3,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from .config import load_host_config
 from .hostctl import HostController
+
+
+def _process_error_text(error: subprocess.CalledProcessError | subprocess.TimeoutExpired) -> str:
+    for value in (
+        getattr(error, "stderr", None),
+        getattr(error, "stdout", None),
+        getattr(error, "output", None),
+    ):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return str(error)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -175,11 +187,18 @@ def main() -> int:
     if args.command == "shared-access":
         if args.shared_access_command == "execute":
             payload = json.load(sys.stdin)
-            result = controller.execute_shared_access(
-                args.user_id,
-                payload,
-                timeout_seconds=args.timeout_seconds,
-            )
+            try:
+                result = controller.execute_shared_access(
+                    args.user_id,
+                    payload,
+                    timeout_seconds=args.timeout_seconds,
+                )
+            except subprocess.CalledProcessError as error:
+                print(_process_error_text(error), file=sys.stderr)
+                return int(error.returncode) if isinstance(error.returncode, int) else 1
+            except subprocess.TimeoutExpired as error:
+                print(_process_error_text(error), file=sys.stderr)
+                return 124
             print(json.dumps(result, indent=2))
             return 0
 

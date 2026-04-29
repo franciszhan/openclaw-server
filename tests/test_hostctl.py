@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from openclaw_hostctl import cli as hostctl_cli
 from openclaw_hostctl.config import save_user_record
 from openclaw_hostctl.hostctl import (
     HostController,
@@ -914,6 +917,38 @@ class HostControllerTests(unittest.TestCase):
             self.assertEqual(directory["U0275195STW"]["display_name"], "Francis Zhan")
             self.assertEqual(directory["U0275195STW"]["vm_address"], "172.31.0.11")
             self.assertTrue(directory["U0275195STW"]["opt_in"])
+
+    def test_shared_access_cli_surfaces_guest_stderr(self) -> None:
+        config = example_config(Path("/tmp/openclaw-test"))
+        controller = mock.Mock()
+        controller.execute_shared_access.side_effect = subprocess.CalledProcessError(
+            1,
+            ["ssh", "admin@172.31.0.11", "/usr/local/bin/openclaw-shared-access", "execute"],
+            stderr="lookup returned no supporting references\n",
+            output="",
+        )
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(hostctl_cli, "load_host_config", return_value=config),
+            mock.patch.object(hostctl_cli, "HostController", return_value=controller),
+            mock.patch(
+                "sys.argv",
+                [
+                    "openclaw-hostctl",
+                    "--config",
+                    "/tmp/openclaw-test/host-config.json",
+                    "shared-access",
+                    "execute",
+                    "francis",
+                ],
+            ),
+            mock.patch("sys.stdin", io.StringIO('{"action_type":"email_intro_lookup"}\n')),
+            mock.patch("sys.stderr", stderr),
+        ):
+            exit_code = hostctl_cli.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("lookup returned no supporting references", stderr.getvalue())
 
 
 class FirecrackerTests(unittest.TestCase):
