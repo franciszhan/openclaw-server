@@ -182,6 +182,13 @@
 
 - [x] Update VM agent instructions so direct Gmail/email prompts run `google-auth-status` before using Google Workspace data.
 - [x] Make the company AGENTS addendum refresh replace stale instructions instead of leaving old addenda in place.
-- [ ] Push the updated addendum to existing prod VMs.
+- [x] Push the updated addendum to existing prod VMs.
 - [x] Verify locally with targeted tests, full tests, compile checks, config validation, and whitespace checks.
-- [ ] Verify on prod.
+- [x] Verify on prod.
+
+## Direct Email Prompt Auth Refresh Review
+
+- Direct owner-agent prompts now instruct the agent to run `google-auth-status` before Gmail/email/inbox or other Google Workspace access.
+- `google-auth-status` already refreshes expired access tokens through the host broker before returning `connected: true`.
+- The AGENTS addendum updater now replaces stale addenda, so existing instructions can evolve instead of being permanently skipped by the marker.
+- Updated and verified the instruction across all 15 active prod VMs.
