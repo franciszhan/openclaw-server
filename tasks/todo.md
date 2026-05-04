@@ -214,4 +214,5 @@
 - [x] Create per-VM OpenAI project service accounts and install their generated API keys into VM `.env` files.
 - [x] Restart and verify every VM gateway with a non-content OpenAI `/v1/models` auth check.
 - [x] Store a non-secret service-account/key-id mapping on prod.
+- [x] Remove temporary VM `.env.backup-*` files that contained the old shared key.
 - [ ] Revoke the temporary admin key and old shared `test-key` after operator review.
