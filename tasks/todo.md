@@ -196,7 +196,14 @@
 ## OpenClaw And Codex 5.5 Sweep
 
 - [x] Inventory current OpenClaw versions and default models across prod VMs.
-- [ ] Update OpenClaw inside each VM.
-- [ ] Move VMs still on the 5.4 default model to `openai/gpt-5.5`.
-- [ ] Restart and verify each OpenClaw gateway.
-- [ ] Record final versions, models, and any exceptions.
+- [x] Update OpenClaw inside each VM.
+- [x] Move VMs still on the 5.4 default model to `openai/gpt-5.5`.
+- [x] Restart and verify each OpenClaw gateway.
+- [x] Record final versions, models, and any exceptions.
+
+## OpenClaw And Codex 5.5 Sweep Review
+
+- Pre-sweep state: all 15 prod VMs were active on `OpenClaw 2026.4.8 (9ece252)` with `agents.defaults.model.primary` set to `openai/gpt-5.4`.
+- Verified the latest npm tag from a guest as `openclaw@2026.5.3-1`, then updated each VM with `sudo npm i -g openclaw@latest --no-fund --no-audit --loglevel=error`.
+- Updated every VM still on 5.4 to `openai/gpt-5.5`, preserving the existing provider route instead of switching unauthenticated VMs to the `openai-codex` OAuth route.
+- Restarted every `openclaw-gateway.service` and independently verified all 15 VMs now report `OpenClaw 2026.5.3-1 (2eae30e)`, model `openai/gpt-5.5`, and gateway `active`.
