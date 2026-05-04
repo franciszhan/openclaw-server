@@ -127,7 +127,7 @@ This writes directly into the real OpenClaw state under `/home/admin/.openclaw` 
 
 It also does the extra setup needed so OpenClaw is usable immediately after boot:
 
-- defaults the agent model to `openai/gpt-5.4` unless you override `openclaw.defaultModel`
+- defaults the agent model to `openai/gpt-5.5` unless you override `openclaw.defaultModel`
 - creates a gateway auth token in `openclaw.json`
 - installs and enables the user-level `openclaw-gateway.service`
 - queues a guest-side gateway reload/restart on the next boot so the new config is live without a manual SSH step

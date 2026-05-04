@@ -192,3 +192,11 @@
 - `google-auth-status` already refreshes expired access tokens through the host broker before returning `connected: true`.
 - The AGENTS addendum updater now replaces stale addenda, so existing instructions can evolve instead of being permanently skipped by the marker.
 - Updated and verified the instruction across all 15 active prod VMs.
+
+## OpenClaw And Codex 5.5 Sweep
+
+- [x] Inventory current OpenClaw versions and default models across prod VMs.
+- [ ] Update OpenClaw inside each VM.
+- [ ] Move VMs still on the 5.4 default model to `openai/gpt-5.5`.
+- [ ] Restart and verify each OpenClaw gateway.
+- [ ] Record final versions, models, and any exceptions.

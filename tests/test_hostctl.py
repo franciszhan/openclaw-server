@@ -615,7 +615,7 @@ class HostControllerTests(unittest.TestCase):
             )
             self.assertEqual(
                 openclaw_config["agents"]["defaults"]["model"]["primary"],
-                "openai/gpt-5.4",
+                "openai/gpt-5.5",
             )
             self.assertEqual(openclaw_config["tools"]["profile"], "coding")
             self.assertEqual(openclaw_config["commands"]["native"], "auto")

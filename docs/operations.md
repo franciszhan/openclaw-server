@@ -250,7 +250,7 @@ Activation does all of this:
 - writes `/home/admin/.openclaw/agents/main/agent/auth-profiles.json` with env-backed API key refs
 - writes `/home/admin/.openclaw/credentials/slack-default-allowFrom.json` from the Slack allowlist
 - writes `/home/admin/.openclaw/shared-access.json` from the per-user shared access config
-- defaults `agents.defaults.model.primary` to `openai/gpt-5.4` unless the manifest overrides it
+- defaults `agents.defaults.model.primary` to `openai/gpt-5.5` unless the manifest overrides it
 - ensures `gateway.auth.token` exists
 - installs and enables the user-level `openclaw-gateway.service`
 - queues a guest-side gateway reload/restart on the next boot so the new config is live automatically

@@ -36,6 +36,7 @@ DEFAULT_HOST_SSH_ED25519_PUBLIC_KEY_PATH = Path("/etc/ssh/ssh_host_ed25519_key.p
 DEFAULT_GOOGLE_OAUTH_BROKER_SUDOERS_PATH = Path("/etc/sudoers.d/openclaw-google-oauth-broker")
 GOOGLE_OAUTH_BROKER_USER = "openclaw-google-broker"
 GOOGLE_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 15 * 60
+DEFAULT_OPENCLAW_MODEL = "openai/gpt-5.5"
 COMPANY_AGENTS_ADDENDUM_MARKER = "<!-- OPENCLAW COMPANY ADDENDUM -->"
 
 
@@ -1428,7 +1429,7 @@ def apply_openclaw_config_manifest(config: dict[str, object], manifest: dict[str
     agent_defaults = agents_section.setdefault("defaults", {})
     if not isinstance(agent_defaults, dict):
         raise ValueError("openclaw.json agents.defaults must be a JSON object")
-    desired_model = str(openclaw.get("defaultModel", "openai/gpt-5.4")).strip() or "openai/gpt-5.4"
+    desired_model = str(openclaw.get("defaultModel", DEFAULT_OPENCLAW_MODEL)).strip() or DEFAULT_OPENCLAW_MODEL
     model_section = agent_defaults.setdefault("model", {})
     if not isinstance(model_section, dict):
         raise ValueError("openclaw.json agents.defaults.model must be a JSON object")
