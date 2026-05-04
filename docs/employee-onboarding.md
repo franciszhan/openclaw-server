@@ -93,6 +93,8 @@ Create one per-user manifest JSON file like:
 }
 ```
 
+Use a per-employee OpenAI project service-account key for `OPENAI_API_KEY` rather than a shared company key. That keeps usage attribution possible without inspecting prompts or responses.
+
 Then provision:
 
 ```bash

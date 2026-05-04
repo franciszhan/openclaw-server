@@ -207,3 +207,11 @@
 - Verified the latest npm tag from a guest as `openclaw@2026.5.3-1`, then updated each VM with `sudo npm i -g openclaw@latest --no-fund --no-audit --loglevel=error`.
 - Updated every VM still on 5.4 to `openai/gpt-5.5`, preserving the existing provider route instead of switching unauthenticated VMs to the `openai-codex` OAuth route.
 - Restarted every `openclaw-gateway.service` and independently verified all 15 VMs now report `OpenClaw 2026.5.3-1 (2eae30e)`, model `openai/gpt-5.5`, and gateway `active`.
+
+## Per-VM OpenAI Key Migration
+
+- [x] Inventory existing project keys and confirm no `openclaw-*` service accounts existed.
+- [x] Create per-VM OpenAI project service accounts and install their generated API keys into VM `.env` files.
+- [x] Restart and verify every VM gateway with a non-content OpenAI `/v1/models` auth check.
+- [x] Store a non-secret service-account/key-id mapping on prod.
+- [ ] Revoke the temporary admin key and old shared `test-key` after operator review.

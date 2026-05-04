@@ -12,3 +12,4 @@
 - Google access tokens are short-lived; shared Gmail auth should refresh automatically at lookup time so connected users do not fail because an access token aged out.
 - Direct user prompts that need Gmail/email data must also run the same Google auth status helper before access; coordinator-only refresh is not enough.
 - When changing OpenClaw model defaults, preserve the existing provider/auth route unless the target route is known to be authenticated on every VM.
+- For per-user OpenAI usage attribution, use one project service-account key per VM and store only non-secret ids centrally; generated key values should live only in each VM's `.env`.

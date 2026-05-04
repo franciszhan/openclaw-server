@@ -263,6 +263,8 @@ Activation does all of this:
 
 This keeps the host-side workflow repeatable even if you need to reprovision or reapply the same employee-specific setup later.
 
+For usage attribution, give each VM its own OpenAI project service-account key in `openclaw.env.OPENAI_API_KEY`. Keep only non-secret mappings such as `user_id`, service-account ID, and key ID on the host; do not store generated key values outside the VM `.env`.
+
 Recommended post-activation check:
 
 ```bash
