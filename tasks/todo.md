@@ -283,5 +283,11 @@
 
 - [x] Add `workflow_context` immediately after the generic identity/work-context question.
 - [x] Run tests and generated hook syntax check.
-- [ ] Deploy the refreshed onboarding context and hook to prod.
-- [ ] Verify prod refresh preserves Francis's current active state.
+- [x] Deploy the refreshed onboarding context and hook to prod.
+- [x] Verify prod refresh preserves Francis's current active state.
+
+## Owner Onboarding Workflow Detail Question Review
+
+- Added a new `workflow_context` question as step 2 in the canonical onboarding sequence.
+- Refreshed Francis's installed onboarding context and hook on prod; `workflow_context` appears in both files.
+- Verified `--skip-trigger` preserved Francis's state; his interview had already reached `confirmed` on the previous sequence, so no live state rewrite was forced.
