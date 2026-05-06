@@ -233,3 +233,11 @@
 - Inserted a Lauren-specific `AGENTS.md` block before the shared company addendum so future shared-skill refreshes preserve it.
 - Removed the temporary file from the host shared-skills bundle and removed it from the repo shared-skills directory.
 - Verified the context file exists, the `AGENTS.md` marker/path are present, and the Lauren marker appears before the company marker without logging the context contents.
+
+## Proactive Owner Onboarding Interview
+
+- [x] Trace the existing host-to-VM Slack and OpenClaw control surfaces.
+- [x] Add a host-triggered owner onboarding interview command.
+- [x] Install durable per-VM context so the owner bot can continue the multi-turn interview.
+- [ ] Test the trigger against Francis's OpenClaw only.
+- [x] Document the operator command and rollout notes.

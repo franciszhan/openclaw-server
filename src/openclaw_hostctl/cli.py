@@ -108,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
     google_auth_broker = google_auth_subparsers.add_parser("broker")
     google_auth_broker.add_argument("user_id")
 
+    owner_onboarding = subparsers.add_parser("owner-onboarding")
+    owner_onboarding_subparsers = owner_onboarding.add_subparsers(
+        dest="owner_onboarding_command",
+        required=True,
+    )
+    owner_onboarding_start = owner_onboarding_subparsers.add_parser("start")
+    owner_onboarding_start.add_argument("user_id")
+    owner_onboarding_start.add_argument("--timeout-seconds", type=int, default=60)
+
     return parser
 
 
@@ -234,6 +243,25 @@ def main() -> int:
             if not original_command:
                 parser.error("google-auth broker requires SSH_ORIGINAL_COMMAND")
             return controller.google_auth_broker(args.user_id, original_command)
+
+    if args.command == "owner-onboarding":
+        if args.owner_onboarding_command == "start":
+            try:
+                result = controller.start_owner_onboarding(
+                    args.user_id,
+                    timeout_seconds=args.timeout_seconds,
+                )
+            except subprocess.CalledProcessError as error:
+                print(_process_error_text(error), file=sys.stderr)
+                return int(error.returncode) if isinstance(error.returncode, int) else 1
+            except subprocess.TimeoutExpired as error:
+                print(_process_error_text(error), file=sys.stderr)
+                return 124
+            except (RuntimeError, ValueError, FileNotFoundError) as error:
+                print(str(error), file=sys.stderr)
+                return 1
+            print(json.dumps(result, indent=2))
+            return 0
 
     parser.error("unknown command")
     return 2

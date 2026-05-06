@@ -38,6 +38,10 @@ GOOGLE_OAUTH_BROKER_USER = "openclaw-google-broker"
 GOOGLE_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 15 * 60
 DEFAULT_OPENCLAW_MODEL = "openai/gpt-5.5"
 COMPANY_AGENTS_ADDENDUM_MARKER = "<!-- OPENCLAW COMPANY ADDENDUM -->"
+OWNER_ONBOARDING_CONTEXT_PATH = "/home/admin/.openclaw/workspace/context/owner-onboarding-interview.md"
+OWNER_ONBOARDING_PROFILE_PATH = "/home/admin/.openclaw/workspace/owner-profile.md"
+OWNER_ONBOARDING_AGENTS_MARKER = "<!-- OPENCLAW OWNER ONBOARDING INTERVIEW -->"
+OWNER_ONBOARDING_AGENTS_END_MARKER = "<!-- /OPENCLAW OWNER ONBOARDING INTERVIEW -->"
 
 
 class HostController:
@@ -566,6 +570,70 @@ class HostController:
             timeout=timeout_seconds,
         )
         return json.loads(result.stdout)
+
+    def start_owner_onboarding(
+        self,
+        user_id: str,
+        *,
+        timeout_seconds: int = 60,
+    ) -> dict[str, object]:
+        require_root()
+        user = self._load_user(user_id)
+        private_key = self.config.automation_ssh_private_key_path
+        if not private_key or not private_key.exists():
+            raise FileNotFoundError("automation SSH private key is not configured")
+        owner_slack_user_id = self._owner_slack_user_id_from_manifest(user_id)
+        self.config.shared_access_root.mkdir(parents=True, exist_ok=True)
+        self.config.shared_access_known_hosts_path.touch(exist_ok=True)
+        payload = {
+            "user_id": user.user_id,
+            "display_name": user.display_name,
+            "owner_slack_user_id": owner_slack_user_id,
+            "context_path": OWNER_ONBOARDING_CONTEXT_PATH,
+            "profile_path": OWNER_ONBOARDING_PROFILE_PATH,
+            "context": render_owner_onboarding_context(),
+            "agents_block": render_owner_onboarding_agents_block(),
+            "trigger_message": render_owner_onboarding_trigger_message(),
+        }
+        command = [
+            "ssh",
+            "-i",
+            str(private_key),
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            f"UserKnownHostsFile={self.config.shared_access_known_hosts_path}",
+            "-o",
+            "ConnectTimeout=10",
+            f"admin@{user.ip_address}",
+            "python3",
+            "-c",
+            shlex.quote(render_owner_onboarding_guest_trigger_script()),
+        ]
+        result = subprocess.run(
+            command,
+            check=True,
+            text=True,
+            input=json.dumps(payload),
+            capture_output=True,
+            timeout=timeout_seconds,
+        )
+        return json.loads(result.stdout)
+
+    def _owner_slack_user_id_from_manifest(self, user_id: str) -> str:
+        manifest_path = self.config.user_config_store_path(user_id)
+        if not manifest_path.exists():
+            return ""
+        manifest = load_json_file(manifest_path)
+        slack_user_id = manifest.get("slack_user_id")
+        if isinstance(slack_user_id, str) and slack_user_id.strip():
+            return slack_user_id.strip()
+        allow_from = extract_slack_allow_from(manifest)
+        if allow_from:
+            return allow_from[0]
+        return ""
 
     def _assert_guest_gateway_admin_paired(self, user: UserRecord, private_key: Path) -> None:
         script = r"""
@@ -1723,6 +1791,316 @@ def append_company_agents_addendum(agents_path: Path) -> bool:
     separator = "\n\n" if existing and not existing.endswith("\n\n") else ""
     agents_path.write_text(existing + separator + addendum, encoding="utf-8")
     return True
+
+
+def append_owner_onboarding_agents_block(agents_path: Path) -> bool:
+    existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else "# AGENTS.md\n"
+    replacement = upsert_owner_onboarding_agents_block(existing)
+    if replacement == existing:
+        return False
+    agents_path.parent.mkdir(parents=True, exist_ok=True)
+    agents_path.write_text(replacement, encoding="utf-8")
+    return True
+
+
+def upsert_owner_onboarding_agents_block(existing: str) -> str:
+    block = render_owner_onboarding_agents_block()
+    start = existing.find(OWNER_ONBOARDING_AGENTS_MARKER)
+    end = existing.find(OWNER_ONBOARDING_AGENTS_END_MARKER)
+    if start != -1 and end != -1 and end > start:
+        end += len(OWNER_ONBOARDING_AGENTS_END_MARKER)
+        return join_agents_sections(existing[:start], block, existing[end:])
+    if start != -1:
+        company = existing.find(COMPANY_AGENTS_ADDENDUM_MARKER, start)
+        if company != -1:
+            return join_agents_sections(existing[:start], block, existing[company:])
+        return join_agents_sections(existing[:start], block)
+    company = existing.find(COMPANY_AGENTS_ADDENDUM_MARKER)
+    if company != -1:
+        return join_agents_sections(existing[:company], block, existing[company:])
+    return join_agents_sections(existing, block)
+
+
+def join_agents_sections(*sections: str) -> str:
+    parts = [section.strip() for section in sections if section and section.strip()]
+    return "\n\n".join(parts) + ("\n" if parts else "")
+
+
+def render_owner_onboarding_agents_block(
+    *,
+    context_path: str = OWNER_ONBOARDING_CONTEXT_PATH,
+) -> str:
+    return f"""{OWNER_ONBOARDING_AGENTS_MARKER}
+
+## Owner Onboarding Interview
+
+- Host operators may trigger a proactive Slack DM onboarding interview with your owner.
+- When the owner replies to that setup interview in Slack DM, continue from `{context_path}`.
+- Keep the interview conversational and multi-turn. Ask one question at a time, adapt to short answers, and make it easy for a non-agentic owner to respond naturally.
+- Do not ask for secrets, API keys, passwords, private tokens, or sensitive personal details.
+- At the end, summarize the owner profile and preferences, ask for confirmation, and then save the confirmed summary to `{OWNER_ONBOARDING_PROFILE_PATH}` if file tools are available.
+{OWNER_ONBOARDING_AGENTS_END_MARKER}
+"""
+
+
+def render_owner_onboarding_context() -> str:
+    return f"""# Owner Onboarding Interview
+
+You are running a proactive onboarding interview with your owner so you can become more useful without waiting for perfect prompts.
+
+Interview style:
+
+- Keep it conversational, warm, and low-friction.
+- Ask one question at a time.
+- Use short follow-ups when an answer is vague, but do not interrogate.
+- Acknowledge answers briefly, then move to the next useful question.
+- Do not ask for secrets, API keys, passwords, private tokens, or sensitive personal details.
+- If the owner wants to stop, pause and offer to resume later.
+
+Core topics to cover:
+
+- What the owner prefers to be called.
+- What the owner does for work and what outcomes they are responsible for.
+- The teams, projects, customers, or workflows they want you to understand.
+- Their preferred answer style: concise vs. detailed, bullets vs. prose, default level of rigor, and when to show uncertainty.
+- Their preferred tone, name for you, and optional emoji or visual identity preferences.
+- Where you should be proactive: reminders, follow-ups, research, inbox/calendar/doc review, drafting, planning, monitoring, or coordination.
+- Tools and data sources they want connected or used more often.
+- Boundaries: what you should avoid doing, when to ask before acting, and what notifications are too noisy.
+- Pain points where a small recurring automation or agent habit would save time.
+
+Flow:
+
+1. Start with identity and work context.
+2. Move into output preferences and tone.
+3. Ask about proactive opportunities and tools.
+4. Ask about boundaries and notification preferences.
+5. Summarize what you learned and ask the owner to confirm or correct it.
+6. After confirmation, save a concise owner profile to `{OWNER_ONBOARDING_PROFILE_PATH}` if file tools are available.
+
+The saved owner profile should be practical and short: role, priorities, preferences, proactive behaviors to try, tools/data sources, boundaries, and open follow-ups.
+"""
+
+
+def render_owner_onboarding_trigger_message() -> str:
+    return (
+        "Start your owner onboarding interview in Slack DM. Use the owner onboarding context file "
+        f"at `{OWNER_ONBOARDING_CONTEXT_PATH}`. Send only the first conversational message. "
+        "Keep it short, friendly, and one question at a time. Mention that this is a quick setup "
+        "interview so you can learn the owner's work context, output preferences, useful tools, "
+        "and proactive habits. Tell them not to send secrets or API keys. End with exactly one "
+        "opening question: what should I call you, and in one or two sentences what work should "
+        "I understand you do day to day?"
+    )
+
+
+def render_owner_onboarding_guest_trigger_script() -> str:
+    company_marker_json = json.dumps(COMPANY_AGENTS_ADDENDUM_MARKER)
+    start_marker_json = json.dumps(OWNER_ONBOARDING_AGENTS_MARKER)
+    end_marker_json = json.dumps(OWNER_ONBOARDING_AGENTS_END_MARKER)
+    return f"""#!/usr/bin/env python3
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+import json
+import os
+import secrets
+import subprocess
+import sys
+import time
+
+COMPANY_MARKER = {company_marker_json}
+START_MARKER = {start_marker_json}
+END_MARKER = {end_marker_json}
+
+
+def load_json(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def join_sections(*sections):
+    parts = [section.strip() for section in sections if section and section.strip()]
+    return "\\n\\n".join(parts) + ("\\n" if parts else "")
+
+
+def upsert_block(existing, block):
+    start = existing.find(START_MARKER)
+    end = existing.find(END_MARKER)
+    if start != -1 and end != -1 and end > start:
+        end += len(END_MARKER)
+        return join_sections(existing[:start], block, existing[end:])
+    if start != -1:
+        company = existing.find(COMPANY_MARKER, start)
+        if company != -1:
+            return join_sections(existing[:start], block, existing[company:])
+        return join_sections(existing[:start], block)
+    company = existing.find(COMPANY_MARKER)
+    if company != -1:
+        return join_sections(existing[:company], block, existing[company:])
+    return join_sections(existing, block)
+
+
+def ensure_hooks_config():
+    config_path = Path("/home/admin/.openclaw/openclaw.json")
+    if not config_path.exists():
+        raise RuntimeError("OpenClaw config is missing")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {{}}
+    port = int(gateway.get("port") or 18789)
+    hooks = config.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {{}}
+        config["hooks"] = hooks
+    before = json.dumps(config, sort_keys=True)
+    hooks["enabled"] = True
+    hooks["path"] = str(hooks.get("path") or "/hooks")
+    if not isinstance(hooks.get("token"), str) or not str(hooks.get("token")).strip():
+        hooks["token"] = secrets.token_urlsafe(32)
+    hooks.setdefault("allowedAgentIds", ["main"])
+    hooks.setdefault("allowRequestSessionKey", False)
+    after = json.dumps(config, sort_keys=True)
+    changed = before != after
+    if changed:
+        config_path.write_text(json.dumps(config, indent=2) + "\\n", encoding="utf-8")
+        os.chmod(config_path, 0o600)
+    return {{
+        "changed": changed,
+        "path": str(hooks["path"]).rstrip("/") or "/hooks",
+        "token": str(hooks["token"]),
+        "port": port,
+    }}
+
+
+def resolve_owner_slack_user_id(payload):
+    owner = str(payload.get("owner_slack_user_id") or "").strip()
+    if owner:
+        return owner
+    for raw_path in (
+        "/home/admin/.openclaw/credentials/slack-default-allowFrom.json",
+        "/home/admin/.openclaw/credentials/slack-allowFrom.json",
+    ):
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text(encoding="utf-8"))
+        allow_from = data.get("allowFrom")
+        if isinstance(allow_from, list):
+            for value in allow_from:
+                owner = str(value).strip()
+                if owner:
+                    return owner
+    raise RuntimeError("owner Slack user id is not configured")
+
+
+def restart_gateway_if_needed(changed):
+    if not changed:
+        return False
+    result = subprocess.run(
+        ["systemctl", "--user", "restart", "openclaw-gateway.service"],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        failure = result.stderr.strip() or result.stdout.strip() or "gateway restart failed"
+        raise RuntimeError(failure)
+    return True
+
+
+def wait_for_gateway(port):
+    deadline = time.time() + 30
+    last_error = None
+    while time.time() < deadline:
+        try:
+            with urlopen(f"http://127.0.0.1:{{port}}/health", timeout=2) as response:
+                response.read()
+            return
+        except Exception as error:
+            last_error = error
+            time.sleep(1)
+    raise RuntimeError(f"OpenClaw gateway did not become healthy: {{last_error}}")
+
+
+def openclaw_hook_agent(hooks_config, body):
+    hook_path = str(hooks_config["path"]).rstrip("/") or "/hooks"
+    url = f"http://127.0.0.1:{{hooks_config['port']}}{{hook_path}}/agent"
+    request = Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={{
+            "Authorization": f"Bearer {{hooks_config['token']}}",
+            "Content-Type": "application/json; charset=utf-8",
+        }},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=180) as response:
+            raw = response.read().decode("utf-8")
+    except HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenClaw /hooks/agent failed: HTTP {{error.code}} {{detail}}") from error
+    except URLError as error:
+        raise RuntimeError(f"OpenClaw /hooks/agent failed: {{error}}") from error
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("OpenClaw /hooks/agent returned non-JSON response") from error
+    return data
+
+
+def main():
+    payload = json.loads(sys.stdin.read())
+    context_path = Path(str(payload["context_path"]))
+    context_path.parent.mkdir(parents=True, exist_ok=True)
+    context_path.write_text(str(payload["context"]).rstrip() + "\\n", encoding="utf-8")
+    os.chmod(context_path, 0o600)
+
+    agents_path = Path("/home/admin/.openclaw/workspace/AGENTS.md")
+    existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else "# AGENTS.md\\n"
+    updated = upsert_block(existing, str(payload["agents_block"]))
+    agents_updated = updated != existing
+    if agents_updated:
+        agents_path.parent.mkdir(parents=True, exist_ok=True)
+        agents_path.write_text(updated, encoding="utf-8")
+
+    owner = resolve_owner_slack_user_id(payload)
+    hooks_config = ensure_hooks_config()
+    restarted = restart_gateway_if_needed(bool(hooks_config["changed"]))
+    wait_for_gateway(int(hooks_config["port"]))
+    hook_response = openclaw_hook_agent(
+        hooks_config,
+        {{
+            "name": "Owner onboarding interview",
+            "agentId": "main",
+            "message": str(payload["trigger_message"]),
+            "deliver": True,
+            "channel": "slack",
+            "to": f"user:{{owner}}",
+            "thinking": "low",
+            "timeoutSeconds": 180,
+        }},
+    )
+    print(json.dumps({{
+        "user_id": payload.get("user_id"),
+        "display_name": payload.get("display_name"),
+        "owner_slack_user_id": owner,
+        "trigger": "openclaw_gateway_hooks_agent",
+        "hook_response": hook_response,
+        "context_path": str(context_path),
+        "profile_path": payload.get("profile_path"),
+        "agents_updated": agents_updated,
+        "hooks_configured": True,
+        "gateway_restarted": restarted,
+    }}))
+
+
+try:
+    main()
+except Exception as error:
+    print(str(error), file=sys.stderr)
+    raise SystemExit(1)
+"""
 
 
 def render_company_agents_addendum() -> str:

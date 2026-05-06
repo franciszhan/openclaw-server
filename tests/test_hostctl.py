@@ -13,7 +13,9 @@ from openclaw_hostctl import cli as hostctl_cli
 from openclaw_hostctl.config import save_user_record
 from openclaw_hostctl.hostctl import (
     HostController,
+    OWNER_ONBOARDING_AGENTS_MARKER,
     append_company_agents_addendum,
+    append_owner_onboarding_agents_block,
     ensure_guest_google_oauth_runtime,
     ensure_company_agents_addendum,
     ensure_company_agents_addendum_runtime,
@@ -25,6 +27,10 @@ from openclaw_hostctl.hostctl import (
     render_company_agents_refresh_service,
     render_google_auth_status_wrapper,
     render_company_agents_addendum,
+    render_owner_onboarding_context,
+    render_owner_onboarding_guest_trigger_script,
+    render_owner_onboarding_trigger_message,
+    upsert_owner_onboarding_agents_block,
     render_google_connect_wrapper,
     render_google_finish_wrapper,
     validate_user_manifest,
@@ -259,6 +265,42 @@ class HostControllerTests(unittest.TestCase):
             self.assertNotIn("stale instruction", content)
             self.assertIn("Before using Gmail, email, inbox", content)
             self.assertEqual(content.count("## Company Addendum"), 1)
+
+    def test_owner_onboarding_block_is_inserted_before_company_addendum(self) -> None:
+        original = "# AGENTS.md\n\nBase instructions.\n\n" + render_company_agents_addendum()
+        content = upsert_owner_onboarding_agents_block(original)
+        self.assertIn("## Owner Onboarding Interview", content)
+        self.assertIn("one question at a time", content)
+        self.assertLess(
+            content.index(OWNER_ONBOARDING_AGENTS_MARKER),
+            content.index(render_company_agents_addendum().splitlines()[0]),
+        )
+        self.assertEqual(upsert_owner_onboarding_agents_block(content), content)
+
+    def test_append_owner_onboarding_agents_block_creates_agents_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            agents_path = Path(tmp_dir) / "workspace/AGENTS.md"
+            self.assertTrue(append_owner_onboarding_agents_block(agents_path))
+            self.assertFalse(append_owner_onboarding_agents_block(agents_path))
+            content = agents_path.read_text(encoding="utf-8")
+            self.assertIn("## Owner Onboarding Interview", content)
+            self.assertEqual(content.count("## Owner Onboarding Interview"), 1)
+
+    def test_owner_onboarding_prompt_uses_native_openclaw_hook(self) -> None:
+        context = render_owner_onboarding_context()
+        trigger_message = render_owner_onboarding_trigger_message()
+        script = render_owner_onboarding_guest_trigger_script()
+        compile(script, "<owner-onboarding-guest-trigger>", "exec")
+        self.assertIn("Ask one question at a time", context)
+        self.assertIn("Do not ask for secrets", context)
+        self.assertIn("owner-profile.md", context)
+        self.assertIn("/hooks/agent", script)
+        self.assertIn("openclaw_gateway_hooks_agent", script)
+        self.assertIn("systemctl", script)
+        self.assertIn("user:{owner}", script)
+        self.assertIn("Start your owner onboarding interview", trigger_message)
+        self.assertNotIn("slack.com/api", script)
+        self.assertNotIn("chat.postMessage", script)
 
     def test_company_agents_runtime_installs_path_based_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1002,6 +1044,108 @@ class HostControllerTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("google email access is not connected", stderr.getvalue())
+
+    def test_owner_onboarding_cli_starts_user_interview(self) -> None:
+        config = example_config(Path("/tmp/openclaw-test"))
+        controller = mock.Mock()
+        controller.start_owner_onboarding.return_value = {
+            "user_id": "francis",
+            "trigger": "openclaw_gateway_hooks_agent",
+        }
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(hostctl_cli, "load_host_config", return_value=config),
+            mock.patch.object(hostctl_cli, "HostController", return_value=controller),
+            mock.patch(
+                "sys.argv",
+                [
+                    "openclaw-hostctl",
+                    "--config",
+                    "/tmp/openclaw-test/host-config.json",
+                    "owner-onboarding",
+                    "start",
+                    "francis",
+                    "--timeout-seconds",
+                    "120",
+                ],
+            ),
+            mock.patch("sys.stdout", stdout),
+        ):
+            exit_code = hostctl_cli.main()
+
+        self.assertEqual(exit_code, 0)
+        controller.start_owner_onboarding.assert_called_once_with(
+            "francis",
+            timeout_seconds=120,
+        )
+        self.assertIn("openclaw_gateway_hooks_agent", stdout.getvalue())
+
+    def test_start_owner_onboarding_ssh_payload_uses_owner_slack_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_root = Path(tmp_dir)
+            config = example_config(storage_root)
+            config.user_dir("francis").mkdir(parents=True, exist_ok=True)
+            config.automation_ssh_private_key_path.write_text("PRIVATE KEY\n", encoding="utf-8")
+            config.user_config_store_path("francis").write_text(
+                json.dumps(
+                    {
+                        "user_id": "francis",
+                        "slack_user_id": "UOWNER",
+                        "openclaw": {
+                            "channels": {
+                                "slack": {
+                                    "botToken": "xoxb-test",
+                                    "appToken": "xapp-test",
+                                    "allowFrom": ["UALLOW"],
+                                }
+                            }
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            save_user_record(
+                config.user_record_path("francis"),
+                UserRecord(
+                    user_id="francis",
+                    display_name="Francis",
+                    machine_name="openclaw-francis",
+                    ip_address="172.31.0.11",
+                    mac_address="06:00:ac:1f:00:0b",
+                    tap_name="ocfrancis",
+                    rootfs_path=str(config.user_rootfs_path("francis")),
+                    created_at="2026-03-10T00:00:00Z",
+                ),
+            )
+            controller = HostController(config)
+            completed = subprocess.CompletedProcess(
+                args=["ssh"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "user_id": "francis",
+                        "owner_slack_user_id": "UOWNER",
+                        "trigger": "openclaw_gateway_hooks_agent",
+                    }
+                )
+                + "\n",
+                stderr="",
+            )
+
+            with (
+                mock.patch("openclaw_hostctl.hostctl.require_root"),
+                mock.patch("openclaw_hostctl.hostctl.subprocess.run", return_value=completed) as run_mock,
+            ):
+                result = controller.start_owner_onboarding("francis")
+
+            self.assertEqual(result["trigger"], "openclaw_gateway_hooks_agent")
+            command = run_mock.call_args.args[0]
+            self.assertIn("admin@172.31.0.11", command)
+            self.assertNotIn("slack.com/api", " ".join(command))
+            payload = json.loads(run_mock.call_args.kwargs["input"])
+            self.assertEqual(payload["owner_slack_user_id"], "UOWNER")
+            self.assertIn("Start your owner onboarding interview", payload["trigger_message"])
 
     def test_shared_access_preflights_guest_gateway_admin_pairing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

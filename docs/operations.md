@@ -374,6 +374,16 @@ sudo openclaw-hostctl google-auth refresh-all
 
 Inside each VM, `google-auth-status` uses the same refresh path. Agent instructions require running it before direct Gmail/email/inbox or Google Workspace work, so normal user prompts refresh on demand too.
 
+## Proactive Owner Onboarding
+
+Operators can trigger a conversational onboarding interview from a user's own OpenClaw:
+
+```bash
+sudo openclaw-hostctl owner-onboarding start francis
+```
+
+This installs a small owner-onboarding context file in the target VM workspace, updates `AGENTS.md` so the bot continues the interview when the owner replies, enables the OpenClaw Gateway hook endpoint on that VM if needed, and triggers native `POST /hooks/agent` delivery to the owner's Slack DM.
+
 ## Start, Stop, And Inspect
 
 ```bash
