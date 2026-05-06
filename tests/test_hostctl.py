@@ -29,6 +29,8 @@ from openclaw_hostctl.hostctl import (
     render_company_agents_addendum,
     render_owner_onboarding_context,
     render_owner_onboarding_guest_trigger_script,
+    render_owner_onboarding_hook_handler,
+    render_owner_onboarding_hook_metadata,
     render_owner_onboarding_initial_state,
     render_owner_onboarding_trigger_message,
     upsert_owner_onboarding_agents_block,
@@ -292,6 +294,8 @@ class HostControllerTests(unittest.TestCase):
     def test_owner_onboarding_prompt_uses_native_openclaw_hook(self) -> None:
         context = render_owner_onboarding_context()
         state = render_owner_onboarding_initial_state()
+        hook_metadata = render_owner_onboarding_hook_metadata()
+        hook_handler = render_owner_onboarding_hook_handler()
         trigger_message = render_owner_onboarding_trigger_message()
         script = render_owner_onboarding_guest_trigger_script()
         compile(script, "<owner-onboarding-guest-trigger>", "exec")
@@ -305,6 +309,13 @@ class HostControllerTests(unittest.TestCase):
         self.assertIn("/hooks/agent", script)
         self.assertIn("openclaw_gateway_hooks_agent", script)
         self.assertIn("install_only", script)
+        self.assertIn("owner-onboarding-continuation", hook_metadata)
+        self.assertIn("message:received", hook_metadata)
+        self.assertIn('event.action !== "received"', hook_handler)
+        self.assertIn("/usr/bin/openclaw", hook_handler)
+        self.assertIn("current_question_id", hook_handler)
+        self.assertIn("owner_onboarding_hook_updated", script)
+        self.assertIn("openclaw\", \"hooks\", \"enable", script)
         self.assertIn("systemctl", script)
         self.assertIn("user:{owner}", script)
         self.assertIn("Start your owner onboarding interview", trigger_message)
@@ -1189,6 +1200,8 @@ class HostControllerTests(unittest.TestCase):
             payload = json.loads(run_mock.call_args.kwargs["input"])
             self.assertEqual(payload["owner_slack_user_id"], "UOWNER")
             self.assertIn("Start your owner onboarding interview", payload["trigger_message"])
+            self.assertEqual(payload["hook_name"], "owner-onboarding-continuation")
+            self.assertIn("owner-onboarding-continuation", payload["hook_dir"])
             self.assertTrue(payload["send_initial"])
             self.assertEqual(payload["state"]["current_question_id"], "identity_work_context")
 

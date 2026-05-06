@@ -13,3 +13,4 @@
 - Direct user prompts that need Gmail/email data must also run the same Google auth status helper before access; coordinator-only refresh is not enough.
 - When changing OpenClaw model defaults, preserve the existing provider/auth route unless the target route is known to be authenticated on every VM.
 - For per-user OpenAI usage attribution, use one project service-account key per VM and store only non-secret ids centrally; generated key values should live only in each VM's `.env`.
+- Host-triggered OpenClaw workflows that must continue across normal Slack DM turns should not rely only on `AGENTS.md`; prompt cache boundaries can leave active sessions with stale instructions, so persist explicit state and use an internal hook for deterministic continuation.

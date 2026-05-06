@@ -248,3 +248,11 @@
 - Added `--skip-trigger` for refreshing interview context/state without sending another first question.
 - Installed Francis's interview context and active state; manually advanced Francis's state to `output_preferences` after the first answer was already captured.
 - Sent the next Francis follow-up question through native `openclaw message send`.
+
+## Owner Onboarding Continuation Hook
+
+- [x] Confirm Francis's state is stuck at `output_preferences` while `USER.md` captured the answer.
+- [x] Add a managed OpenClaw internal hook to advance onboarding state on owner Slack DM answers.
+- [x] Run focused hostctl tests.
+- [ ] Deploy through git pull on prod and refresh Francis's onboarding assets.
+- [ ] Advance Francis to `proactivity_areas` and verify the hook is installed/enabled.

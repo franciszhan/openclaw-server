@@ -43,6 +43,8 @@ OWNER_ONBOARDING_STATE_PATH = "/home/admin/.openclaw/workspace/context/owner-onb
 OWNER_ONBOARDING_PROFILE_PATH = "/home/admin/.openclaw/workspace/owner-profile.md"
 OWNER_ONBOARDING_AGENTS_MARKER = "<!-- OPENCLAW OWNER ONBOARDING INTERVIEW -->"
 OWNER_ONBOARDING_AGENTS_END_MARKER = "<!-- /OPENCLAW OWNER ONBOARDING INTERVIEW -->"
+OWNER_ONBOARDING_HOOK_NAME = "owner-onboarding-continuation"
+OWNER_ONBOARDING_HOOK_DIR = f"/home/admin/.openclaw/hooks/{OWNER_ONBOARDING_HOOK_NAME}"
 
 
 class HostController:
@@ -594,9 +596,13 @@ class HostController:
             "context_path": OWNER_ONBOARDING_CONTEXT_PATH,
             "state_path": OWNER_ONBOARDING_STATE_PATH,
             "profile_path": OWNER_ONBOARDING_PROFILE_PATH,
+            "hook_name": OWNER_ONBOARDING_HOOK_NAME,
+            "hook_dir": OWNER_ONBOARDING_HOOK_DIR,
             "context": render_owner_onboarding_context(),
             "state": render_owner_onboarding_initial_state(),
             "agents_block": render_owner_onboarding_agents_block(),
+            "hook_metadata": render_owner_onboarding_hook_metadata(),
+            "hook_handler": render_owner_onboarding_hook_handler(),
             "trigger_message": render_owner_onboarding_trigger_message(),
             "send_initial": send_initial,
         }
@@ -1842,6 +1848,7 @@ def render_owner_onboarding_agents_block(
 
 - Host operators may trigger a proactive Slack DM onboarding interview with your owner.
 - The interview context lives at `{context_path}` and active interview state lives at `{state_path}`.
+- A managed OpenClaw hook named `{OWNER_ONBOARDING_HOOK_NAME}` may advance this state and send the next question if a Slack DM answer arrives before you do it yourself.
 - On every Slack DM from your owner, if `{state_path}` exists and `status` is `active`, read both files before finalizing.
 - If the owner's message is an answer to the active onboarding question, update memory/profile files as useful, update `{state_path}`, and ask the next onboarding question in the same reply. Do not stop after only logging the answer.
 - The first question may have been sent by a webhook/cron session, while the owner's answer arrives in the normal Slack DM session. Treat that as the same active interview.
@@ -1925,6 +1932,357 @@ def render_owner_onboarding_initial_state() -> dict[str, object]:
     }
 
 
+def render_owner_onboarding_hook_metadata() -> str:
+    return f"""---
+name: {OWNER_ONBOARDING_HOOK_NAME}
+description: "Advance proactive owner onboarding when the owner answers in Slack DM."
+metadata:
+  {{"openclaw": {{"events": ["message:received"], "always": true}}}}
+---
+
+# Owner Onboarding Continuation
+
+Keeps the host-triggered owner onboarding interview moving across normal Slack DM turns.
+"""
+
+
+def render_owner_onboarding_hook_handler(
+    *,
+    state_path: str = OWNER_ONBOARDING_STATE_PATH,
+    profile_path: str = OWNER_ONBOARDING_PROFILE_PATH,
+) -> str:
+    question_sequence = [
+        "identity_work_context",
+        "output_preferences",
+        "proactivity_areas",
+        "tools_data_sources",
+        "boundaries_notifications",
+        "agent_identity_tone",
+        "improvement_loop",
+        "summary_confirmation",
+    ]
+    question_labels = {
+        "identity_work_context": "Work context",
+        "output_preferences": "Output preferences",
+        "proactivity_areas": "Proactivity",
+        "tools_data_sources": "Tools and data sources",
+        "boundaries_notifications": "Boundaries and notifications",
+        "agent_identity_tone": "Agent identity and tone",
+        "improvement_loop": "Improvement loop",
+        "summary_confirmation": "Confirmation",
+    }
+    question_texts = {
+        "output_preferences": (
+            "Thanks, I captured that. Next question: when I answer you, what default output style "
+            "do you want: short bullets, detailed analysis, direct recommendations, or something else?"
+        ),
+        "proactivity_areas": (
+            "Got it. Where would you actually want me to be proactive: reminders and follow-ups, "
+            "inbox or calendar monitoring, research, drafting, deal tracking, coordination, or something else?"
+        ),
+        "tools_data_sources": (
+            "What tools, accounts, docs, inboxes, calendars, Slack channels, Drive folders, "
+            "deal trackers, or other sources should I know about or use more often?"
+        ),
+        "boundaries_notifications": (
+            "What should I avoid doing, when should I ask before acting, and what kind of notifications "
+            "would feel too noisy?"
+        ),
+        "agent_identity_tone": (
+            "What should my default tone or style be with you, and do you care about my name, emoji, "
+            "or personality?"
+        ),
+        "improvement_loop": (
+            "What would you most want me to get better at over the next few weeks, and how should I "
+            "notice or ask for feedback?"
+        ),
+    }
+    handler = r"""import fs from "node:fs/promises";
+import { spawn } from "node:child_process";
+
+const STATE_PATH = __STATE_PATH__;
+const PROFILE_PATH = __PROFILE_PATH__;
+const HOOK_CONFIG_PATH = __HOOK_CONFIG_PATH__;
+const LOG_PATH = __LOG_PATH__;
+const QUESTION_SEQUENCE = __QUESTION_SEQUENCE__;
+const QUESTION_LABELS = __QUESTION_LABELS__;
+const QUESTION_TEXTS = __QUESTION_TEXTS__;
+const MAX_ANSWER_LENGTH = 2400;
+const MAX_PROCESSED_IDS = 80;
+
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function stripUserPrefix(value) {
+  const text = cleanString(value);
+  return text.startsWith("user:") ? text.slice(5) : text;
+}
+
+function matchesOwner(value, owner) {
+  if (!owner) {
+    return false;
+  }
+  return stripUserPrefix(value) === stripUserPrefix(owner);
+}
+
+function clipAnswer(value) {
+  const text = cleanString(value);
+  if (text.length <= MAX_ANSWER_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, MAX_ANSWER_LENGTH)}...`;
+}
+
+async function readJson(path, fallback = null) {
+  try {
+    return JSON.parse(await fs.readFile(path, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJson(path, value) {
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await fs.chmod(tmp, 0o600).catch(() => undefined);
+  await fs.rename(tmp, path);
+}
+
+async function appendLog(message) {
+  const line = `${new Date().toISOString()} ${message}\n`;
+  await fs.mkdir("/home/admin/.openclaw/logs", { recursive: true }).catch(() => undefined);
+  await fs.appendFile(LOG_PATH, line, "utf8").catch(() => undefined);
+}
+
+async function resolveOwnerSlackUserId() {
+  const config = await readJson(HOOK_CONFIG_PATH, {});
+  const configured = cleanString(config?.owner_slack_user_id);
+  if (configured) {
+    return configured;
+  }
+  for (const path of [
+    "/home/admin/.openclaw/credentials/slack-default-allowFrom.json",
+    "/home/admin/.openclaw/credentials/slack-allowFrom.json",
+  ]) {
+    const data = await readJson(path, {});
+    const allowFrom = Array.isArray(data?.allowFrom) ? data.allowFrom : [];
+    for (const value of allowFrom) {
+      const owner = cleanString(value);
+      if (owner) {
+        return owner;
+      }
+    }
+  }
+  return "";
+}
+
+function getSenderId(context) {
+  return (
+    cleanString(context?.metadata?.senderId) ||
+    cleanString(context?.senderId) ||
+    cleanString(context?.from)
+  );
+}
+
+function isOwnerSlackDirectMessage(context, owner) {
+  if (cleanString(context?.channelId).toLowerCase() !== "slack") {
+    return false;
+  }
+  if (cleanString(context?.metadata?.channelName)) {
+    return false;
+  }
+  return matchesOwner(getSenderId(context), owner);
+}
+
+function shouldPause(content) {
+  const text = content.toLowerCase();
+  return (
+    text === "stop" ||
+    text === "pause" ||
+    text.includes("stop onboarding") ||
+    text.includes("pause onboarding")
+  );
+}
+
+function nextQuestionId(state, currentQuestionId) {
+  const sequence = Array.isArray(state.question_sequence) && state.question_sequence.length
+    ? state.question_sequence
+    : QUESTION_SEQUENCE;
+  const currentIndex = sequence.indexOf(currentQuestionId);
+  if (currentIndex >= 0 && currentIndex + 1 < sequence.length) {
+    return sequence[currentIndex + 1];
+  }
+  return "summary_confirmation";
+}
+
+function latestAnswers(state) {
+  const answers = new Map();
+  for (const answer of Array.isArray(state.answers) ? state.answers : []) {
+    if (answer && typeof answer.question_id === "string") {
+      answers.set(answer.question_id, cleanString(answer.answer || answer.note));
+    }
+  }
+  return answers;
+}
+
+function buildSummaryQuestion(state) {
+  const answers = latestAnswers(state);
+  const lines = QUESTION_SEQUENCE
+    .filter((id) => id !== "summary_confirmation")
+    .map((id) => {
+      const label = QUESTION_LABELS[id] || id;
+      const answer = answers.get(id) || "(not answered yet)";
+      return `- ${label}: ${answer}`;
+    });
+  return [
+    "I have enough to turn this into my working owner profile. Does this look right, and is there anything you want to correct?",
+    "",
+    ...lines,
+  ].join("\n");
+}
+
+function questionFor(state, nextId) {
+  if (nextId === "summary_confirmation") {
+    return buildSummaryQuestion(state);
+  }
+  return QUESTION_TEXTS[nextId] || "What else should I know to make this setup useful?";
+}
+
+function profileMarkdown(state) {
+  const answers = latestAnswers(state);
+  const lines = [
+    "# Owner Profile",
+    "",
+    `Generated from proactive onboarding on ${new Date().toISOString()}.`,
+    "",
+    "## Interview Answers",
+    "",
+  ];
+  for (const id of QUESTION_SEQUENCE) {
+    if (id === "summary_confirmation") {
+      continue;
+    }
+    lines.push(`### ${QUESTION_LABELS[id] || id}`);
+    lines.push("");
+    lines.push(answers.get(id) || "(not answered)");
+    lines.push("");
+  }
+  const confirmation = answers.get("summary_confirmation");
+  if (confirmation) {
+    lines.push("## Confirmation / Corrections");
+    lines.push("");
+    lines.push(confirmation);
+    lines.push("");
+  }
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function sendSlackMessage(owner, message) {
+  const child = spawn(
+    "/usr/bin/openclaw",
+    ["message", "send", "--channel", "slack", "--target", `user:${stripUserPrefix(owner)}`, "--message", message, "--json"],
+    {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, HOME: "/home/admin" },
+    },
+  );
+  child.unref();
+}
+
+function markProcessed(state, messageId) {
+  const processed = Array.isArray(state.processed_message_ids) ? state.processed_message_ids : [];
+  if (messageId && processed.includes(messageId)) {
+    return false;
+  }
+  if (messageId) {
+    processed.push(messageId);
+    state.processed_message_ids = processed.slice(-MAX_PROCESSED_IDS);
+  }
+  return true;
+}
+
+const handler = async (event) => {
+  if (event.type !== "message" || event.action !== "received") {
+    return;
+  }
+  const context = event.context || {};
+  const owner = await resolveOwnerSlackUserId();
+  if (!isOwnerSlackDirectMessage(context, owner)) {
+    return;
+  }
+  const content = cleanString(context.content);
+  if (!content || content.startsWith("/")) {
+    return;
+  }
+  const state = await readJson(STATE_PATH, null);
+  if (!state || state.status !== "active") {
+    return;
+  }
+  const messageId = cleanString(context.messageId);
+  if (!markProcessed(state, messageId)) {
+    return;
+  }
+  const currentQuestionId = cleanString(state.current_question_id) || "identity_work_context";
+  const capturedAt = new Date().toISOString();
+  state.answers = Array.isArray(state.answers) ? state.answers : [];
+  state.asked_question_ids = Array.isArray(state.asked_question_ids) ? state.asked_question_ids : [];
+  state.answers.push({
+    question_id: currentQuestionId,
+    answer: clipAnswer(content),
+    captured_at: capturedAt,
+    source: "owner-onboarding-continuation-hook",
+    message_id: messageId || undefined,
+  });
+  state.updated_at = capturedAt;
+
+  if (shouldPause(content)) {
+    state.status = "paused";
+    state.paused_at = capturedAt;
+    await writeJson(STATE_PATH, state);
+    sendSlackMessage(owner, "Paused the setup interview. Send me a DM when you want to resume it.");
+    await appendLog(`paused at ${currentQuestionId}`);
+    return;
+  }
+
+  if (currentQuestionId === "summary_confirmation") {
+    state.status = "confirmed";
+    state.confirmed_at = capturedAt;
+    await writeJson(STATE_PATH, state);
+    await fs.writeFile(PROFILE_PATH, profileMarkdown(state), "utf8");
+    await fs.chmod(PROFILE_PATH, 0o600).catch(() => undefined);
+    sendSlackMessage(owner, "Done - I saved that as my owner profile. I'll use it as working context going forward.");
+    await appendLog("confirmed profile");
+    return;
+  }
+
+  const nextId = nextQuestionId(state, currentQuestionId);
+  state.current_question_id = nextId;
+  if (!state.asked_question_ids.includes(nextId)) {
+    state.asked_question_ids.push(nextId);
+  }
+  await writeJson(STATE_PATH, state);
+  sendSlackMessage(owner, questionFor(state, nextId));
+  await appendLog(`advanced ${currentQuestionId} -> ${nextId}`);
+};
+
+export default handler;
+"""
+    replacements = {
+        "__STATE_PATH__": json.dumps(state_path),
+        "__PROFILE_PATH__": json.dumps(profile_path),
+        "__HOOK_CONFIG_PATH__": json.dumps(f"{OWNER_ONBOARDING_HOOK_DIR}/config.json"),
+        "__LOG_PATH__": json.dumps(f"/home/admin/.openclaw/logs/{OWNER_ONBOARDING_HOOK_NAME}.log"),
+        "__QUESTION_SEQUENCE__": json.dumps(question_sequence, indent=2),
+        "__QUESTION_LABELS__": json.dumps(question_labels, indent=2),
+        "__QUESTION_TEXTS__": json.dumps(question_texts, indent=2),
+    }
+    for placeholder, value in replacements.items():
+        handler = handler.replace(placeholder, value)
+    return handler
+
+
 def render_owner_onboarding_trigger_message() -> str:
     return (
         "Start your owner onboarding interview in Slack DM. Use the owner onboarding context file "
@@ -1981,6 +2339,51 @@ def upsert_block(existing, block):
     if company != -1:
         return join_sections(existing[:company], block, existing[company:])
     return join_sections(existing, block)
+
+
+def write_text_if_changed(path, content, mode):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = str(content).rstrip() + "\\n"
+    if path.exists() and path.read_text(encoding="utf-8") == text:
+        os.chmod(path, mode)
+        return False
+    path.write_text(text, encoding="utf-8")
+    os.chmod(path, mode)
+    return True
+
+
+def ensure_owner_onboarding_hook(payload, owner):
+    hook_dir = Path(str(payload["hook_dir"]))
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    changed = False
+    changed = write_text_if_changed(hook_dir / "HOOK.md", payload["hook_metadata"], 0o644) or changed
+    changed = write_text_if_changed(hook_dir / "handler.js", payload["hook_handler"], 0o644) or changed
+    hook_config = {{
+        "owner_slack_user_id": owner,
+        "state_path": str(payload["state_path"]),
+        "profile_path": str(payload["profile_path"]),
+    }}
+    config_text = json.dumps(hook_config, indent=2)
+    changed = write_text_if_changed(hook_dir / "config.json", config_text, 0o600) or changed
+    return changed
+
+
+def enable_internal_hook(hook_name):
+    result = subprocess.run(
+        ["/usr/bin/openclaw", "hooks", "enable", str(hook_name)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+        env={{**os.environ, "HOME": "/home/admin"}},
+    )
+    if result.returncode != 0:
+        failure = result.stderr.strip() or result.stdout.strip() or "openclaw hooks enable failed"
+        raise RuntimeError(failure)
+    return {{
+        "stdout": result.stdout.strip(),
+        "stderr": result.stderr.strip(),
+    }}
 
 
 def ensure_hooks_config():
@@ -2113,8 +2516,10 @@ def main():
         agents_path.write_text(updated, encoding="utf-8")
 
     owner = resolve_owner_slack_user_id(payload)
+    hook_updated = ensure_owner_onboarding_hook(payload, owner)
+    hook_enable_result = enable_internal_hook(str(payload["hook_name"]))
     hooks_config = ensure_hooks_config()
-    restarted = restart_gateway_if_needed(bool(hooks_config["changed"]))
+    restarted = restart_gateway_if_needed(bool(hooks_config["changed"] or hook_updated or hook_enable_result))
     wait_for_gateway(int(hooks_config["port"]))
     hook_response = None
     if bool(payload.get("send_initial", True)):
@@ -2141,6 +2546,10 @@ def main():
         "state_path": str(state_path),
         "profile_path": payload.get("profile_path"),
         "agents_updated": agents_updated,
+        "owner_onboarding_hook": str(payload.get("hook_name")),
+        "owner_onboarding_hook_dir": str(payload.get("hook_dir")),
+        "owner_onboarding_hook_updated": hook_updated,
+        "owner_onboarding_hook_enable": hook_enable_result,
         "hooks_configured": True,
         "gateway_restarted": restarted,
     }}))
