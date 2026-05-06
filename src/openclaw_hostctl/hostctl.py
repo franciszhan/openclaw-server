@@ -575,7 +575,7 @@ class HostController:
         self,
         user_id: str,
         *,
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 240,
     ) -> dict[str, object]:
         require_root()
         user = self._load_user(user_id)

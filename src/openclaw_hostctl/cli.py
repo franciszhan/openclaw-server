@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     owner_onboarding_start = owner_onboarding_subparsers.add_parser("start")
     owner_onboarding_start.add_argument("user_id")
-    owner_onboarding_start.add_argument("--timeout-seconds", type=int, default=60)
+    owner_onboarding_start.add_argument("--timeout-seconds", type=int, default=240)
 
     return parser
 
