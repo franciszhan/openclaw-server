@@ -297,4 +297,11 @@
 - [x] Remove the agent identity/tone question from the canonical sequence.
 - [x] Add a contextual "been a minute" style lead-in to the first DM trigger.
 - [x] Run tests and generated hook syntax check.
-- [ ] Deploy refreshed onboarding context and hook to prod.
+- [x] Deploy refreshed onboarding context and hook to prod.
+
+## Owner Onboarding Question Trim Review
+
+- Canonical sequence is now 8 questions: `identity_work_context`, `workflow_context`, `output_preferences`, `proactivity_areas`, `tools_data_sources`, `boundaries_notifications`, `improvement_loop`, `summary_confirmation`.
+- Removed `agent_identity_tone` from the context, initial state, and continuation hook.
+- Updated the initial trigger prompt to lead with context similar to "Hey, been a minute - I want to improve myself for you..."
+- Refreshed Francis's installed context and hook on prod; his already-confirmed state was preserved.
