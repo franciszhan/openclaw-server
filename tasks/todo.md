@@ -263,3 +263,11 @@
 - The hook is enabled, loadable, and listening on `message:received`.
 - `--skip-trigger` now preserves existing active onboarding state; verified `state_written: false` and no gateway restart on a no-op refresh.
 - Francis's interview state is active at `proactivity_areas`; the proactivity question was sent through native OpenClaw Slack delivery.
+
+## Owner Onboarding Duplicate Question Fix
+
+- [x] Confirm duplicate source: hook sends next question immediately, then the agent asks it again after processing the answer.
+- [x] Change the continuation hook to record and advance state only; the agent owns the visible Slack reply.
+- [x] Run tests and generated hook syntax check.
+- [ ] Deploy to prod and refresh Francis's hook without resetting state.
+- [ ] Verify Francis's state and hook install after rollout.

@@ -1848,9 +1848,10 @@ def render_owner_onboarding_agents_block(
 
 - Host operators may trigger a proactive Slack DM onboarding interview with your owner.
 - The interview context lives at `{context_path}` and active interview state lives at `{state_path}`.
-- A managed OpenClaw hook named `{OWNER_ONBOARDING_HOOK_NAME}` may advance this state and send the next question if a Slack DM answer arrives before you do it yourself.
+- A managed OpenClaw hook named `{OWNER_ONBOARDING_HOOK_NAME}` records owner Slack DM answers and advances this state before your normal reply; the hook does not send Slack messages.
 - On every Slack DM from your owner, if `{state_path}` exists and `status` is `active`, read both files before finalizing.
-- If the owner's message is an answer to the active onboarding question, update memory/profile files as useful, update `{state_path}`, and ask the next onboarding question in the same reply. Do not stop after only logging the answer.
+- If the hook already recorded the latest answer in `{state_path}` with `source: owner-onboarding-continuation-hook`, do not append a duplicate answer or advance the state again. Update memory/profile files as useful, then ask the current `current_question_id` question exactly once in your final reply.
+- If the hook did not record the answer, update memory/profile files as useful, update `{state_path}`, and ask the next onboarding question in the same reply. Do not stop after only logging the answer.
 - The first question may have been sent by a webhook/cron session, while the owner's answer arrives in the normal Slack DM session. Treat that as the same active interview.
 - Keep the interview conversational and multi-turn. Ask one question at a time, adapt to short answers, and make it easy for a non-agentic owner to respond naturally.
 - Do not ask for secrets, API keys, passwords, private tokens, or sensitive personal details.
@@ -1900,6 +1901,8 @@ State handling:
 
 - Active state is stored at `{OWNER_ONBOARDING_STATE_PATH}`.
 - Treat `current_question_id` as the question the owner is answering now.
+- The host-managed continuation hook may record the owner's latest answer and advance `current_question_id` before you reply. Hook-recorded answers have `source: owner-onboarding-continuation-hook` and `last_hook_transition.delivery_owner: agent`.
+- If the hook already recorded the latest answer, do not add a duplicate answer or advance the state again. Use the already-advanced `current_question_id` as the next question to ask once in your final reply.
 - After the owner answers, append a short answer note to `answers`, set `current_question_id` to the next unanswered question id, and ask that next question.
 - If all questions are answered, ask the summary confirmation question.
 - After the owner confirms the summary, save a concise owner profile to `{OWNER_ONBOARDING_PROFILE_PATH}` and set status to `confirmed`.
@@ -1927,7 +1930,7 @@ def render_owner_onboarding_initial_state() -> dict[str, object]:
         "answers": [],
         "notes": [
             "The first question is sent by a host-triggered OpenClaw hook. The owner's answer may arrive in a separate normal Slack DM session.",
-            "After each answer, update this state file and ask the next question in the same reply.",
+            "The owner-onboarding-continuation hook records answers and advances state only; the agent asks the next question in its normal reply.",
         ],
     }
 
@@ -1971,34 +1974,7 @@ def render_owner_onboarding_hook_handler(
         "improvement_loop": "Improvement loop",
         "summary_confirmation": "Confirmation",
     }
-    question_texts = {
-        "output_preferences": (
-            "Thanks, I captured that. Next question: when I answer you, what default output style "
-            "do you want: short bullets, detailed analysis, direct recommendations, or something else?"
-        ),
-        "proactivity_areas": (
-            "Got it. Where would you actually want me to be proactive: reminders and follow-ups, "
-            "inbox or calendar monitoring, research, drafting, deal tracking, coordination, or something else?"
-        ),
-        "tools_data_sources": (
-            "What tools, accounts, docs, inboxes, calendars, Slack channels, Drive folders, "
-            "deal trackers, or other sources should I know about or use more often?"
-        ),
-        "boundaries_notifications": (
-            "What should I avoid doing, when should I ask before acting, and what kind of notifications "
-            "would feel too noisy?"
-        ),
-        "agent_identity_tone": (
-            "What should my default tone or style be with you, and do you care about my name, emoji, "
-            "or personality?"
-        ),
-        "improvement_loop": (
-            "What would you most want me to get better at over the next few weeks, and how should I "
-            "notice or ask for feedback?"
-        ),
-    }
     handler = r"""import fs from "node:fs/promises";
-import { spawn } from "node:child_process";
 
 const STATE_PATH = __STATE_PATH__;
 const PROFILE_PATH = __PROFILE_PATH__;
@@ -2006,7 +1982,6 @@ const HOOK_CONFIG_PATH = __HOOK_CONFIG_PATH__;
 const LOG_PATH = __LOG_PATH__;
 const QUESTION_SEQUENCE = __QUESTION_SEQUENCE__;
 const QUESTION_LABELS = __QUESTION_LABELS__;
-const QUESTION_TEXTS = __QUESTION_TEXTS__;
 const MAX_ANSWER_LENGTH = 2400;
 const MAX_PROCESSED_IDS = 80;
 
@@ -2126,29 +2101,6 @@ function latestAnswers(state) {
   return answers;
 }
 
-function buildSummaryQuestion(state) {
-  const answers = latestAnswers(state);
-  const lines = QUESTION_SEQUENCE
-    .filter((id) => id !== "summary_confirmation")
-    .map((id) => {
-      const label = QUESTION_LABELS[id] || id;
-      const answer = answers.get(id) || "(not answered yet)";
-      return `- ${label}: ${answer}`;
-    });
-  return [
-    "I have enough to turn this into my working owner profile. Does this look right, and is there anything you want to correct?",
-    "",
-    ...lines,
-  ].join("\n");
-}
-
-function questionFor(state, nextId) {
-  if (nextId === "summary_confirmation") {
-    return buildSummaryQuestion(state);
-  }
-  return QUESTION_TEXTS[nextId] || "What else should I know to make this setup useful?";
-}
-
 function profileMarkdown(state) {
   const answers = latestAnswers(state);
   const lines = [
@@ -2176,19 +2128,6 @@ function profileMarkdown(state) {
     lines.push("");
   }
   return `${lines.join("\n").trim()}\n`;
-}
-
-function sendSlackMessage(owner, message) {
-  const child = spawn(
-    "/usr/bin/openclaw",
-    ["message", "send", "--channel", "slack", "--target", `user:${stripUserPrefix(owner)}`, "--message", message, "--json"],
-    {
-      detached: true,
-      stdio: "ignore",
-      env: { ...process.env, HOME: "/home/admin" },
-    },
-  );
-  child.unref();
 }
 
 function markProcessed(state, messageId) {
@@ -2236,24 +2175,30 @@ const handler = async (event) => {
     message_id: messageId || undefined,
   });
   state.updated_at = capturedAt;
+  state.last_hook_transition = {
+    from_question_id: currentQuestionId,
+    inbound_message_id: messageId || undefined,
+    captured_at: capturedAt,
+    delivery_owner: "agent",
+  };
 
   if (shouldPause(content)) {
     state.status = "paused";
     state.paused_at = capturedAt;
+    state.last_hook_transition.to_status = "paused";
     await writeJson(STATE_PATH, state);
-    sendSlackMessage(owner, "Paused the setup interview. Send me a DM when you want to resume it.");
-    await appendLog(`paused at ${currentQuestionId}`);
+    await appendLog(`paused at ${currentQuestionId}; agent owns visible reply`);
     return;
   }
 
   if (currentQuestionId === "summary_confirmation") {
     state.status = "confirmed";
     state.confirmed_at = capturedAt;
+    state.last_hook_transition.to_status = "confirmed";
     await writeJson(STATE_PATH, state);
     await fs.writeFile(PROFILE_PATH, profileMarkdown(state), "utf8");
     await fs.chmod(PROFILE_PATH, 0o600).catch(() => undefined);
-    sendSlackMessage(owner, "Done - I saved that as my owner profile. I'll use it as working context going forward.");
-    await appendLog("confirmed profile");
+    await appendLog("confirmed profile; agent owns visible reply");
     return;
   }
 
@@ -2262,9 +2207,9 @@ const handler = async (event) => {
   if (!state.asked_question_ids.includes(nextId)) {
     state.asked_question_ids.push(nextId);
   }
+  state.last_hook_transition.to_question_id = nextId;
   await writeJson(STATE_PATH, state);
-  sendSlackMessage(owner, questionFor(state, nextId));
-  await appendLog(`advanced ${currentQuestionId} -> ${nextId}`);
+  await appendLog(`advanced ${currentQuestionId} -> ${nextId}; agent owns visible reply`);
 };
 
 export default handler;
@@ -2276,7 +2221,6 @@ export default handler;
         "__LOG_PATH__": json.dumps(f"/home/admin/.openclaw/logs/{OWNER_ONBOARDING_HOOK_NAME}.log"),
         "__QUESTION_SEQUENCE__": json.dumps(question_sequence, indent=2),
         "__QUESTION_LABELS__": json.dumps(question_labels, indent=2),
-        "__QUESTION_TEXTS__": json.dumps(question_texts, indent=2),
     }
     for placeholder, value in replacements.items():
         handler = handler.replace(placeholder, value)
