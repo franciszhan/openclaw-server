@@ -29,6 +29,7 @@ from openclaw_hostctl.hostctl import (
     render_company_agents_addendum,
     render_owner_onboarding_context,
     render_owner_onboarding_guest_trigger_script,
+    render_owner_onboarding_initial_state,
     render_owner_onboarding_trigger_message,
     upsert_owner_onboarding_agents_block,
     render_google_connect_wrapper,
@@ -271,6 +272,8 @@ class HostControllerTests(unittest.TestCase):
         content = upsert_owner_onboarding_agents_block(original)
         self.assertIn("## Owner Onboarding Interview", content)
         self.assertIn("one question at a time", content)
+        self.assertIn("owner-onboarding-state.json", content)
+        self.assertIn("Do not stop after only logging the answer", content)
         self.assertLess(
             content.index(OWNER_ONBOARDING_AGENTS_MARKER),
             content.index(render_company_agents_addendum().splitlines()[0]),
@@ -288,14 +291,20 @@ class HostControllerTests(unittest.TestCase):
 
     def test_owner_onboarding_prompt_uses_native_openclaw_hook(self) -> None:
         context = render_owner_onboarding_context()
+        state = render_owner_onboarding_initial_state()
         trigger_message = render_owner_onboarding_trigger_message()
         script = render_owner_onboarding_guest_trigger_script()
         compile(script, "<owner-onboarding-guest-trigger>", "exec")
         self.assertIn("Ask one question at a time", context)
         self.assertIn("Do not ask for secrets", context)
+        self.assertIn("After the owner answers", context)
         self.assertIn("owner-profile.md", context)
+        self.assertEqual(state["status"], "active")
+        self.assertEqual(state["current_question_id"], "identity_work_context")
+        self.assertIn("output_preferences", state["question_sequence"])
         self.assertIn("/hooks/agent", script)
         self.assertIn("openclaw_gateway_hooks_agent", script)
+        self.assertIn("install_only", script)
         self.assertIn("systemctl", script)
         self.assertIn("user:{owner}", script)
         self.assertIn("Start your owner onboarding interview", trigger_message)
@@ -1076,9 +1085,43 @@ class HostControllerTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         controller.start_owner_onboarding.assert_called_once_with(
             "francis",
+            send_initial=True,
             timeout_seconds=120,
         )
         self.assertIn("openclaw_gateway_hooks_agent", stdout.getvalue())
+
+    def test_owner_onboarding_cli_can_install_without_triggering_dm(self) -> None:
+        config = example_config(Path("/tmp/openclaw-test"))
+        controller = mock.Mock()
+        controller.start_owner_onboarding.return_value = {
+            "user_id": "francis",
+            "trigger": "install_only",
+        }
+        with (
+            mock.patch.object(hostctl_cli, "load_host_config", return_value=config),
+            mock.patch.object(hostctl_cli, "HostController", return_value=controller),
+            mock.patch(
+                "sys.argv",
+                [
+                    "openclaw-hostctl",
+                    "--config",
+                    "/tmp/openclaw-test/host-config.json",
+                    "owner-onboarding",
+                    "start",
+                    "francis",
+                    "--skip-trigger",
+                ],
+            ),
+            mock.patch("sys.stdout", io.StringIO()),
+        ):
+            exit_code = hostctl_cli.main()
+
+        self.assertEqual(exit_code, 0)
+        controller.start_owner_onboarding.assert_called_once_with(
+            "francis",
+            send_initial=False,
+            timeout_seconds=240,
+        )
 
     def test_start_owner_onboarding_ssh_payload_uses_owner_slack_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1146,6 +1189,8 @@ class HostControllerTests(unittest.TestCase):
             payload = json.loads(run_mock.call_args.kwargs["input"])
             self.assertEqual(payload["owner_slack_user_id"], "UOWNER")
             self.assertIn("Start your owner onboarding interview", payload["trigger_message"])
+            self.assertTrue(payload["send_initial"])
+            self.assertEqual(payload["state"]["current_question_id"], "identity_work_context")
 
     def test_shared_access_preflights_guest_gateway_admin_pairing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

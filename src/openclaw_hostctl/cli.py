@@ -115,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     owner_onboarding_start = owner_onboarding_subparsers.add_parser("start")
     owner_onboarding_start.add_argument("user_id")
+    owner_onboarding_start.add_argument(
+        "--skip-trigger",
+        action="store_true",
+        help="install or refresh onboarding context/state without sending the first DM",
+    )
     owner_onboarding_start.add_argument("--timeout-seconds", type=int, default=240)
 
     return parser
@@ -249,6 +254,7 @@ def main() -> int:
             try:
                 result = controller.start_owner_onboarding(
                     args.user_id,
+                    send_initial=not args.skip_trigger,
                     timeout_seconds=args.timeout_seconds,
                 )
             except subprocess.CalledProcessError as error:

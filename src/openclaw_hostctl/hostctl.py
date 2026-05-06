@@ -39,6 +39,7 @@ GOOGLE_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 15 * 60
 DEFAULT_OPENCLAW_MODEL = "openai/gpt-5.5"
 COMPANY_AGENTS_ADDENDUM_MARKER = "<!-- OPENCLAW COMPANY ADDENDUM -->"
 OWNER_ONBOARDING_CONTEXT_PATH = "/home/admin/.openclaw/workspace/context/owner-onboarding-interview.md"
+OWNER_ONBOARDING_STATE_PATH = "/home/admin/.openclaw/workspace/context/owner-onboarding-state.json"
 OWNER_ONBOARDING_PROFILE_PATH = "/home/admin/.openclaw/workspace/owner-profile.md"
 OWNER_ONBOARDING_AGENTS_MARKER = "<!-- OPENCLAW OWNER ONBOARDING INTERVIEW -->"
 OWNER_ONBOARDING_AGENTS_END_MARKER = "<!-- /OPENCLAW OWNER ONBOARDING INTERVIEW -->"
@@ -575,6 +576,7 @@ class HostController:
         self,
         user_id: str,
         *,
+        send_initial: bool = True,
         timeout_seconds: int = 240,
     ) -> dict[str, object]:
         require_root()
@@ -590,10 +592,13 @@ class HostController:
             "display_name": user.display_name,
             "owner_slack_user_id": owner_slack_user_id,
             "context_path": OWNER_ONBOARDING_CONTEXT_PATH,
+            "state_path": OWNER_ONBOARDING_STATE_PATH,
             "profile_path": OWNER_ONBOARDING_PROFILE_PATH,
             "context": render_owner_onboarding_context(),
+            "state": render_owner_onboarding_initial_state(),
             "agents_block": render_owner_onboarding_agents_block(),
             "trigger_message": render_owner_onboarding_trigger_message(),
+            "send_initial": send_initial,
         }
         command = [
             "ssh",
@@ -1829,16 +1834,20 @@ def join_agents_sections(*sections: str) -> str:
 def render_owner_onboarding_agents_block(
     *,
     context_path: str = OWNER_ONBOARDING_CONTEXT_PATH,
+    state_path: str = OWNER_ONBOARDING_STATE_PATH,
 ) -> str:
     return f"""{OWNER_ONBOARDING_AGENTS_MARKER}
 
 ## Owner Onboarding Interview
 
 - Host operators may trigger a proactive Slack DM onboarding interview with your owner.
-- When the owner replies to that setup interview in Slack DM, continue from `{context_path}`.
+- The interview context lives at `{context_path}` and active interview state lives at `{state_path}`.
+- On every Slack DM from your owner, if `{state_path}` exists and `status` is `active`, read both files before finalizing.
+- If the owner's message is an answer to the active onboarding question, update memory/profile files as useful, update `{state_path}`, and ask the next onboarding question in the same reply. Do not stop after only logging the answer.
+- The first question may have been sent by a webhook/cron session, while the owner's answer arrives in the normal Slack DM session. Treat that as the same active interview.
 - Keep the interview conversational and multi-turn. Ask one question at a time, adapt to short answers, and make it easy for a non-agentic owner to respond naturally.
 - Do not ask for secrets, API keys, passwords, private tokens, or sensitive personal details.
-- At the end, summarize the owner profile and preferences, ask for confirmation, and then save the confirmed summary to `{OWNER_ONBOARDING_PROFILE_PATH}` if file tools are available.
+- At the end, summarize the owner profile and preferences, ask for confirmation, and then save the confirmed summary to `{OWNER_ONBOARDING_PROFILE_PATH}` if file tools are available. Set `{state_path}` to `status: confirmed` after the owner confirms.
 {OWNER_ONBOARDING_AGENTS_END_MARKER}
 """
 
@@ -1869,17 +1878,51 @@ Core topics to cover:
 - Boundaries: what you should avoid doing, when to ask before acting, and what notifications are too noisy.
 - Pain points where a small recurring automation or agent habit would save time.
 
-Flow:
+Question sequence:
 
-1. Start with identity and work context.
-2. Move into output preferences and tone.
-3. Ask about proactive opportunities and tools.
-4. Ask about boundaries and notification preferences.
-5. Summarize what you learned and ask the owner to confirm or correct it.
-6. After confirmation, save a concise owner profile to `{OWNER_ONBOARDING_PROFILE_PATH}` if file tools are available.
+1. `identity_work_context`: what to call the owner and what work to understand day to day.
+2. `output_preferences`: preferred answer style, level of detail, bullets vs. prose, rigor, and uncertainty.
+3. `proactivity_areas`: where proactive help would be welcome.
+4. `tools_data_sources`: tools, accounts, docs, inbox/calendar/Slack/Drive/etc. the owner wants you to know or use more.
+5. `boundaries_notifications`: what to avoid, when to ask before acting, and what notification cadence is too noisy.
+6. `agent_identity_tone`: preferred agent name, tone, and optional emoji/personality.
+7. `improvement_loop`: what the owner wants you to get better at and how they want to give feedback.
+8. `summary_confirmation`: summarize the owner profile and ask for confirmation or corrections.
+
+State handling:
+
+- Active state is stored at `{OWNER_ONBOARDING_STATE_PATH}`.
+- Treat `current_question_id` as the question the owner is answering now.
+- After the owner answers, append a short answer note to `answers`, set `current_question_id` to the next unanswered question id, and ask that next question.
+- If all questions are answered, ask the summary confirmation question.
+- After the owner confirms the summary, save a concise owner profile to `{OWNER_ONBOARDING_PROFILE_PATH}` and set status to `confirmed`.
 
 The saved owner profile should be practical and short: role, priorities, preferences, proactive behaviors to try, tools/data sources, boundaries, and open follow-ups.
 """
+
+
+def render_owner_onboarding_initial_state() -> dict[str, object]:
+    return {
+        "version": 1,
+        "status": "active",
+        "current_question_id": "identity_work_context",
+        "asked_question_ids": ["identity_work_context"],
+        "question_sequence": [
+            "identity_work_context",
+            "output_preferences",
+            "proactivity_areas",
+            "tools_data_sources",
+            "boundaries_notifications",
+            "agent_identity_tone",
+            "improvement_loop",
+            "summary_confirmation",
+        ],
+        "answers": [],
+        "notes": [
+            "The first question is sent by a host-triggered OpenClaw hook. The owner's answer may arrive in a separate normal Slack DM session.",
+            "After each answer, update this state file and ask the next question in the same reply.",
+        ],
+    }
 
 
 def render_owner_onboarding_trigger_message() -> str:
@@ -2056,6 +2099,11 @@ def main():
     context_path.write_text(str(payload["context"]).rstrip() + "\\n", encoding="utf-8")
     os.chmod(context_path, 0o600)
 
+    state_path = Path(str(payload["state_path"]))
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(payload["state"], indent=2) + "\\n", encoding="utf-8")
+    os.chmod(state_path, 0o600)
+
     agents_path = Path("/home/admin/.openclaw/workspace/AGENTS.md")
     existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else "# AGENTS.md\\n"
     updated = upsert_block(existing, str(payload["agents_block"]))
@@ -2068,26 +2116,29 @@ def main():
     hooks_config = ensure_hooks_config()
     restarted = restart_gateway_if_needed(bool(hooks_config["changed"]))
     wait_for_gateway(int(hooks_config["port"]))
-    hook_response = openclaw_hook_agent(
-        hooks_config,
-        {{
-            "name": "Owner onboarding interview",
-            "agentId": "main",
-            "message": str(payload["trigger_message"]),
-            "deliver": True,
-            "channel": "slack",
-            "to": f"user:{{owner}}",
-            "thinking": "low",
-            "timeoutSeconds": 180,
-        }},
-    )
+    hook_response = None
+    if bool(payload.get("send_initial", True)):
+        hook_response = openclaw_hook_agent(
+            hooks_config,
+            {{
+                "name": "Owner onboarding interview",
+                "agentId": "main",
+                "message": str(payload["trigger_message"]),
+                "deliver": True,
+                "channel": "slack",
+                "to": f"user:{{owner}}",
+                "thinking": "low",
+                "timeoutSeconds": 180,
+            }},
+        )
     print(json.dumps({{
         "user_id": payload.get("user_id"),
         "display_name": payload.get("display_name"),
         "owner_slack_user_id": owner,
-        "trigger": "openclaw_gateway_hooks_agent",
+        "trigger": "openclaw_gateway_hooks_agent" if hook_response else "install_only",
         "hook_response": hook_response,
         "context_path": str(context_path),
+        "state_path": str(state_path),
         "profile_path": payload.get("profile_path"),
         "agents_updated": agents_updated,
         "hooks_configured": True,

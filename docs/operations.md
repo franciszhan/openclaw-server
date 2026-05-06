@@ -384,6 +384,12 @@ sudo openclaw-hostctl owner-onboarding start francis
 
 This installs a small owner-onboarding context file in the target VM workspace, updates `AGENTS.md` so the bot continues the interview when the owner replies, enables the OpenClaw Gateway hook endpoint on that VM if needed, and triggers native `POST /hooks/agent` delivery to the owner's Slack DM.
 
+To refresh the interview context/state without sending another first question:
+
+```bash
+sudo openclaw-hostctl owner-onboarding start francis --skip-trigger
+```
+
 ## Start, Stop, And Inspect
 
 ```bash
