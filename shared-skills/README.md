@@ -13,3 +13,5 @@ sudo rsync -a /opt/openclaw-server/shared-skills/ /var/lib/openclaw/shared-skill
 ```
 
 Rebuild the base image after materially changing these files so new guests inherit the updated bundle.
+
+User-specific context files can live here too, but they should be activated in the target user's `AGENTS.md` so the agent knows when to read and apply them.

@@ -217,3 +217,11 @@
 - [x] Store a non-secret service-account/key-id mapping on prod.
 - [x] Remove temporary VM `.env.backup-*` files that contained the old shared key.
 - [ ] Revoke the temporary admin key and old shared `test-key` after operator review.
+
+## Lauren Compliance Context Rollout
+
+- [x] Review the new Lauren compliance agent context file.
+- [x] Mark the context active and add explicit operating instructions for Lauren's OpenClaw.
+- [ ] Sync the context into Lauren's VM.
+- [ ] Add a Lauren-specific `AGENTS.md` instruction pointing to the context.
+- [ ] Verify Lauren's VM can see the context without exposing the file contents in logs.
