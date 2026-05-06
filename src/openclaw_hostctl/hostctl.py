@@ -2369,6 +2369,26 @@ def ensure_owner_onboarding_hook(payload, owner):
 
 
 def enable_internal_hook(hook_name):
+    info = subprocess.run(
+        ["/usr/bin/openclaw", "hooks", "info", str(hook_name), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+        env={{**os.environ, "HOME": "/home/admin"}},
+    )
+    if info.returncode == 0:
+        try:
+            hook_info = json.loads(info.stdout)
+        except json.JSONDecodeError:
+            hook_info = {{}}
+        if bool(hook_info.get("enabledByConfig")) and not bool(hook_info.get("disabled")):
+            return {{
+                "changed": False,
+                "already_enabled": True,
+                "stdout": info.stdout.strip(),
+                "stderr": info.stderr.strip(),
+            }}
     result = subprocess.run(
         ["/usr/bin/openclaw", "hooks", "enable", str(hook_name)],
         text=True,
@@ -2381,6 +2401,8 @@ def enable_internal_hook(hook_name):
         failure = result.stderr.strip() or result.stdout.strip() or "openclaw hooks enable failed"
         raise RuntimeError(failure)
     return {{
+        "changed": True,
+        "already_enabled": False,
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
     }}
@@ -2522,7 +2544,9 @@ def main():
     hook_updated = ensure_owner_onboarding_hook(payload, owner)
     hook_enable_result = enable_internal_hook(str(payload["hook_name"]))
     hooks_config = ensure_hooks_config()
-    restarted = restart_gateway_if_needed(bool(hooks_config["changed"] or hook_updated or hook_enable_result))
+    restarted = restart_gateway_if_needed(
+        bool(hooks_config["changed"] or hook_updated or hook_enable_result.get("changed"))
+    )
     wait_for_gateway(int(hooks_config["port"]))
     hook_response = None
     if bool(payload.get("send_initial", True)):
