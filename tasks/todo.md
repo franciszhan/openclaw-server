@@ -239,5 +239,12 @@
 - [x] Trace the existing host-to-VM Slack and OpenClaw control surfaces.
 - [x] Add a host-triggered owner onboarding interview command.
 - [x] Install durable per-VM context so the owner bot can continue the multi-turn interview.
-- [ ] Test the trigger against Francis's OpenClaw only.
+- [x] Test the trigger against Francis's OpenClaw only.
 - [x] Document the operator command and rollout notes.
+
+## Proactive Owner Onboarding Interview Review
+
+- Implemented `openclaw-hostctl owner-onboarding start <user_id>` using OpenClaw's native Gateway `/hooks/agent` path rather than direct Slack API posting.
+- Added `--skip-trigger` for refreshing interview context/state without sending another first question.
+- Installed Francis's interview context and active state; manually advanced Francis's state to `output_preferences` after the first answer was already captured.
+- Sent the next Francis follow-up question through native `openclaw message send`.
