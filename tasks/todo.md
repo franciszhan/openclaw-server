@@ -278,3 +278,10 @@
 - Updated onboarding instructions so Francis Bot treats hook-recorded answers as already persisted and asks only the already-advanced current question once.
 - Verified the installed handler has no `openclaw message send` path and passes `node --check`.
 - Verified Francis's state stayed active at `agent_identity_tone` with 5 captured answers, and a no-op refresh returned `state_written: false`, `owner_onboarding_hook_updated: false`, and `gateway_restarted: false`.
+
+## Owner Onboarding Workflow Detail Question
+
+- [x] Add `workflow_context` immediately after the generic identity/work-context question.
+- [x] Run tests and generated hook syntax check.
+- [ ] Deploy the refreshed onboarding context and hook to prod.
+- [ ] Verify prod refresh preserves Francis's current active state.

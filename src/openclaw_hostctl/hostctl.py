@@ -1879,6 +1879,7 @@ Core topics to cover:
 - What the owner prefers to be called.
 - What the owner does for work and what outcomes they are responsible for.
 - The teams, projects, customers, or workflows they want you to understand.
+- Specific recurring workflows, meetings, artifacts, decisions, handoffs, and review loops where more context would make you more useful.
 - Their preferred answer style: concise vs. detailed, bullets vs. prose, default level of rigor, and when to show uncertainty.
 - Their preferred tone, name for you, and optional emoji or visual identity preferences.
 - Where you should be proactive: reminders, follow-ups, research, inbox/calendar/doc review, drafting, planning, monitoring, or coordination.
@@ -1889,13 +1890,14 @@ Core topics to cover:
 Question sequence:
 
 1. `identity_work_context`: what to call the owner and what work to understand day to day.
-2. `output_preferences`: preferred answer style, level of detail, bullets vs. prose, rigor, and uncertainty.
-3. `proactivity_areas`: where proactive help would be welcome.
-4. `tools_data_sources`: tools, accounts, docs, inbox/calendar/Slack/Drive/etc. the owner wants you to know or use more.
-5. `boundaries_notifications`: what to avoid, when to ask before acting, and what notification cadence is too noisy.
-6. `agent_identity_tone`: preferred agent name, tone, and optional emoji/personality.
-7. `improvement_loop`: what the owner wants you to get better at and how they want to give feedback.
-8. `summary_confirmation`: summarize the owner profile and ask for confirmation or corrections.
+2. `workflow_context`: specific recurring workflows, meetings, artifacts, decisions, handoffs, and review loops you should understand for context.
+3. `output_preferences`: preferred answer style, level of detail, bullets vs. prose, rigor, and uncertainty.
+4. `proactivity_areas`: where proactive help would be welcome.
+5. `tools_data_sources`: tools, accounts, docs, inbox/calendar/Slack/Drive/etc. the owner wants you to know or use more.
+6. `boundaries_notifications`: what to avoid, when to ask before acting, and what notification cadence is too noisy.
+7. `agent_identity_tone`: preferred agent name, tone, and optional emoji/personality.
+8. `improvement_loop`: what the owner wants you to get better at and how they want to give feedback.
+9. `summary_confirmation`: summarize the owner profile and ask for confirmation or corrections.
 
 State handling:
 
@@ -1919,6 +1921,7 @@ def render_owner_onboarding_initial_state() -> dict[str, object]:
         "asked_question_ids": ["identity_work_context"],
         "question_sequence": [
             "identity_work_context",
+            "workflow_context",
             "output_preferences",
             "proactivity_areas",
             "tools_data_sources",
@@ -1956,6 +1959,7 @@ def render_owner_onboarding_hook_handler(
 ) -> str:
     question_sequence = [
         "identity_work_context",
+        "workflow_context",
         "output_preferences",
         "proactivity_areas",
         "tools_data_sources",
@@ -1966,6 +1970,7 @@ def render_owner_onboarding_hook_handler(
     ]
     question_labels = {
         "identity_work_context": "Work context",
+        "workflow_context": "Specific workflows",
         "output_preferences": "Output preferences",
         "proactivity_areas": "Proactivity",
         "tools_data_sources": "Tools and data sources",
