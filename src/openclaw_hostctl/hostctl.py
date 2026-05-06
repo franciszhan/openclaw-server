@@ -2503,9 +2503,12 @@ def main():
     os.chmod(context_path, 0o600)
 
     state_path = Path(str(payload["state_path"]))
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(payload["state"], indent=2) + "\\n", encoding="utf-8")
-    os.chmod(state_path, 0o600)
+    state_written = False
+    if bool(payload.get("send_initial", True)) or not state_path.exists():
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(payload["state"], indent=2) + "\\n", encoding="utf-8")
+        os.chmod(state_path, 0o600)
+        state_written = True
 
     agents_path = Path("/home/admin/.openclaw/workspace/AGENTS.md")
     existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else "# AGENTS.md\\n"
@@ -2544,6 +2547,7 @@ def main():
         "hook_response": hook_response,
         "context_path": str(context_path),
         "state_path": str(state_path),
+        "state_written": state_written,
         "profile_path": payload.get("profile_path"),
         "agents_updated": agents_updated,
         "owner_onboarding_hook": str(payload.get("hook_name")),

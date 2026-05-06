@@ -316,6 +316,8 @@ class HostControllerTests(unittest.TestCase):
         self.assertIn("current_question_id", hook_handler)
         self.assertIn("owner_onboarding_hook_updated", script)
         self.assertIn("openclaw\", \"hooks\", \"enable", script)
+        self.assertIn("state_written", script)
+        self.assertIn('payload.get("send_initial", True)) or not state_path.exists()', script)
         self.assertIn("systemctl", script)
         self.assertIn("user:{owner}", script)
         self.assertIn("Start your owner onboarding interview", trigger_message)
