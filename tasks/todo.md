@@ -222,6 +222,14 @@
 
 - [x] Review the new Lauren compliance agent context file.
 - [x] Mark the context active and add explicit operating instructions for Lauren's OpenClaw.
-- [ ] Sync the context into Lauren's VM. Blocked 2026-05-06: prod SSH to `100.95.220.93` timed out.
-- [ ] Add a Lauren-specific `AGENTS.md` instruction pointing to the context. Blocked until prod SSH is reachable.
-- [ ] Verify Lauren's VM can see the context without exposing the file contents in logs. Blocked until prod SSH is reachable.
+- [x] Sync the context into Lauren's VM.
+- [x] Add a Lauren-specific `AGENTS.md` instruction pointing to the context.
+- [x] Remove the temporary shared-skills copy from the host shared bundle and repo.
+- [x] Verify Lauren's VM can see the context without exposing the file contents in logs.
+
+## Lauren Compliance Context Rollout Review
+
+- Installed the context into Lauren's VM at `/home/admin/.openclaw/workspace/context/lauren-compliance-agent-context.md`.
+- Inserted a Lauren-specific `AGENTS.md` block before the shared company addendum so future shared-skill refreshes preserve it.
+- Removed the temporary file from the host shared-skills bundle and removed it from the repo shared-skills directory.
+- Verified the context file exists, the `AGENTS.md` marker/path are present, and the Lauren marker appears before the company marker without logging the context contents.
