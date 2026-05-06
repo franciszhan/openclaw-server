@@ -254,5 +254,12 @@
 - [x] Confirm Francis's state is stuck at `output_preferences` while `USER.md` captured the answer.
 - [x] Add a managed OpenClaw internal hook to advance onboarding state on owner Slack DM answers.
 - [x] Run focused hostctl tests.
-- [ ] Deploy through git pull on prod and refresh Francis's onboarding assets.
-- [ ] Advance Francis to `proactivity_areas` and verify the hook is installed/enabled.
+- [x] Deploy through git pull on prod and refresh Francis's onboarding assets.
+- [x] Advance Francis to `proactivity_areas` and verify the hook is installed/enabled.
+
+## Owner Onboarding Continuation Hook Review
+
+- Added `owner-onboarding-continuation` as a managed OpenClaw internal hook in Francis's VM.
+- The hook is enabled, loadable, and listening on `message:received`.
+- `--skip-trigger` now preserves existing active onboarding state; verified `state_written: false` and no gateway restart on a no-op refresh.
+- Francis's interview state is active at `proactivity_areas`; the proactivity question was sent through native OpenClaw Slack delivery.
