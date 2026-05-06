@@ -1881,7 +1881,6 @@ Core topics to cover:
 - The teams, projects, customers, or workflows they want you to understand.
 - Specific recurring workflows, meetings, artifacts, decisions, handoffs, and review loops where more context would make you more useful.
 - Their preferred answer style: concise vs. detailed, bullets vs. prose, default level of rigor, and when to show uncertainty.
-- Their preferred tone, name for you, and optional emoji or visual identity preferences.
 - Where you should be proactive: reminders, follow-ups, research, inbox/calendar/doc review, drafting, planning, monitoring, or coordination.
 - Tools and data sources they want connected or used more often.
 - Boundaries: what you should avoid doing, when to ask before acting, and what notifications are too noisy.
@@ -1895,9 +1894,8 @@ Question sequence:
 4. `proactivity_areas`: where proactive help would be welcome.
 5. `tools_data_sources`: tools, accounts, docs, inbox/calendar/Slack/Drive/etc. the owner wants you to know or use more.
 6. `boundaries_notifications`: what to avoid, when to ask before acting, and what notification cadence is too noisy.
-7. `agent_identity_tone`: preferred agent name, tone, and optional emoji/personality.
-8. `improvement_loop`: what the owner wants you to get better at and how they want to give feedback.
-9. `summary_confirmation`: summarize the owner profile and ask for confirmation or corrections.
+7. `improvement_loop`: what the owner wants you to get better at and how they want to give feedback.
+8. `summary_confirmation`: summarize the owner profile and ask for confirmation or corrections.
 
 State handling:
 
@@ -1926,7 +1924,6 @@ def render_owner_onboarding_initial_state() -> dict[str, object]:
             "proactivity_areas",
             "tools_data_sources",
             "boundaries_notifications",
-            "agent_identity_tone",
             "improvement_loop",
             "summary_confirmation",
         ],
@@ -1964,7 +1961,6 @@ def render_owner_onboarding_hook_handler(
         "proactivity_areas",
         "tools_data_sources",
         "boundaries_notifications",
-        "agent_identity_tone",
         "improvement_loop",
         "summary_confirmation",
     ]
@@ -1975,7 +1971,6 @@ def render_owner_onboarding_hook_handler(
         "proactivity_areas": "Proactivity",
         "tools_data_sources": "Tools and data sources",
         "boundaries_notifications": "Boundaries and notifications",
-        "agent_identity_tone": "Agent identity and tone",
         "improvement_loop": "Improvement loop",
         "summary_confirmation": "Confirmation",
     }
@@ -2236,9 +2231,11 @@ def render_owner_onboarding_trigger_message() -> str:
     return (
         "Start your owner onboarding interview in Slack DM. Use the owner onboarding context file "
         f"at `{OWNER_ONBOARDING_CONTEXT_PATH}`. Send only the first conversational message. "
-        "Keep it short, friendly, and one question at a time. Mention that this is a quick setup "
-        "interview so you can learn the owner's work context, output preferences, useful tools, "
-        "and proactive habits. Tell them not to send secrets or API keys. End with exactly one "
+        "Keep it short, friendly, and one question at a time. Start with context so the owner "
+        "understands why you randomly reached out, using wording close to: 'Hey, been a minute - "
+        "I want to improve myself for you, so I am doing a quick setup refresh.' Mention that "
+        "you want to learn the owner's work context, output preferences, useful tools, and "
+        "proactive habits. Tell them not to send secrets or API keys. End with exactly one "
         "opening question: what should I call you, and in one or two sentences what work should "
         "I understand you do day to day?"
     )

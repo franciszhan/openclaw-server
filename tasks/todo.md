@@ -277,7 +277,7 @@
 - Removed the hook's direct Slack send path; it now records the owner answer and advances `current_question_id` only.
 - Updated onboarding instructions so Francis Bot treats hook-recorded answers as already persisted and asks only the already-advanced current question once.
 - Verified the installed handler has no `openclaw message send` path and passes `node --check`.
-- Verified Francis's state stayed active at `agent_identity_tone` with 5 captured answers, and a no-op refresh returned `state_written: false`, `owner_onboarding_hook_updated: false`, and `gateway_restarted: false`.
+- Verified Francis's state stayed active with 5 captured answers, and a no-op refresh returned `state_written: false`, `owner_onboarding_hook_updated: false`, and `gateway_restarted: false`.
 
 ## Owner Onboarding Workflow Detail Question
 
@@ -291,3 +291,10 @@
 - Added a new `workflow_context` question as step 2 in the canonical onboarding sequence.
 - Refreshed Francis's installed onboarding context and hook on prod; `workflow_context` appears in both files.
 - Verified `--skip-trigger` preserved Francis's state; his interview had already reached `confirmed` on the previous sequence, so no live state rewrite was forced.
+
+## Owner Onboarding Question Trim
+
+- [x] Remove the agent identity/tone question from the canonical sequence.
+- [x] Add a contextual "been a minute" style lead-in to the first DM trigger.
+- [x] Run tests and generated hook syntax check.
+- [ ] Deploy refreshed onboarding context and hook to prod.

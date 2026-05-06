@@ -309,6 +309,8 @@ class HostControllerTests(unittest.TestCase):
         self.assertIn("Specific recurring workflows", context)
         self.assertIn("workflow_context", hook_handler)
         self.assertIn("output_preferences", state["question_sequence"])
+        self.assertNotIn("agent_identity_tone", state["question_sequence"])
+        self.assertIn("been a minute", trigger_message)
         self.assertIn("/hooks/agent", script)
         self.assertIn("openclaw_gateway_hooks_agent", script)
         self.assertIn("install_only", script)
