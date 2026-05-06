@@ -269,5 +269,12 @@
 - [x] Confirm duplicate source: hook sends next question immediately, then the agent asks it again after processing the answer.
 - [x] Change the continuation hook to record and advance state only; the agent owns the visible Slack reply.
 - [x] Run tests and generated hook syntax check.
-- [ ] Deploy to prod and refresh Francis's hook without resetting state.
-- [ ] Verify Francis's state and hook install after rollout.
+- [x] Deploy to prod and refresh Francis's hook without resetting state.
+- [x] Verify Francis's state and hook install after rollout.
+
+## Owner Onboarding Duplicate Question Fix Review
+
+- Removed the hook's direct Slack send path; it now records the owner answer and advances `current_question_id` only.
+- Updated onboarding instructions so Francis Bot treats hook-recorded answers as already persisted and asks only the already-advanced current question once.
+- Verified the installed handler has no `openclaw message send` path and passes `node --check`.
+- Verified Francis's state stayed active at `agent_identity_tone` with 5 captured answers, and a no-op refresh returned `state_written: false`, `owner_onboarding_hook_updated: false`, and `gateway_restarted: false`.
