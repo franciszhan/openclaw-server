@@ -222,6 +222,6 @@
 
 - [x] Review the new Lauren compliance agent context file.
 - [x] Mark the context active and add explicit operating instructions for Lauren's OpenClaw.
-- [ ] Sync the context into Lauren's VM.
-- [ ] Add a Lauren-specific `AGENTS.md` instruction pointing to the context.
-- [ ] Verify Lauren's VM can see the context without exposing the file contents in logs.
+- [ ] Sync the context into Lauren's VM. Blocked 2026-05-06: prod SSH to `100.95.220.93` timed out.
+- [ ] Add a Lauren-specific `AGENTS.md` instruction pointing to the context. Blocked until prod SSH is reachable.
+- [ ] Verify Lauren's VM can see the context without exposing the file contents in logs. Blocked until prod SSH is reachable.
