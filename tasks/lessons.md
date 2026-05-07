@@ -15,3 +15,4 @@
 - For per-user OpenAI usage attribution, use one project service-account key per VM and store only non-secret ids centrally; generated key values should live only in each VM's `.env`.
 - Host-triggered OpenClaw workflows that must continue across normal Slack DM turns should not rely only on `AGENTS.md`; prompt cache boundaries can leave active sessions with stale instructions, so persist explicit state and use an internal hook for deterministic continuation.
 - For chat workflows, only one component should own visible follow-up delivery. If an internal hook advances state while the agent also processes the turn, the hook should not also send Slack messages unless the agent response is explicitly suppressed.
+- For long-idle chat workflows, record-only hooks need a delayed fallback when the agent does not visibly ask the expected next question; otherwise stale sessions can acknowledge work without continuing the flow.

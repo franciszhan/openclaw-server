@@ -1848,7 +1848,7 @@ def render_owner_onboarding_agents_block(
 
 - Host operators may trigger a proactive Slack DM onboarding interview with your owner.
 - The interview context lives at `{context_path}` and active interview state lives at `{state_path}`.
-- A managed OpenClaw hook named `{OWNER_ONBOARDING_HOOK_NAME}` records owner Slack DM answers and advances this state before your normal reply; the hook does not send Slack messages.
+- A managed OpenClaw hook named `{OWNER_ONBOARDING_HOOK_NAME}` records owner Slack DM answers and advances this state before your normal reply. It does not send immediately, but may send a delayed fallback if no matching next-question reply is observed.
 - On every Slack DM from your owner, if `{state_path}` exists and `status` is `active`, read both files before finalizing.
 - If the hook already recorded the latest answer in `{state_path}` with `source: owner-onboarding-continuation-hook`, do not append a duplicate answer or advance the state again. Update memory/profile files as useful, then ask the current `current_question_id` question exactly once in your final reply.
 - If the hook did not record the answer, update memory/profile files as useful, update `{state_path}`, and ask the next onboarding question in the same reply. Do not stop after only logging the answer.
@@ -1902,6 +1902,7 @@ State handling:
 - Active state is stored at `{OWNER_ONBOARDING_STATE_PATH}`.
 - Treat `current_question_id` as the question the owner is answering now.
 - The host-managed continuation hook may record the owner's latest answer and advance `current_question_id` before you reply. Hook-recorded answers have `source: owner-onboarding-continuation-hook` and `last_hook_transition.delivery_owner: agent`.
+- If you do not ask the expected next question, the hook may send a delayed fallback once. You should still ask the current `current_question_id` question in your normal reply so the fallback does not need to fire.
 - If the hook already recorded the latest answer, do not add a duplicate answer or advance the state again. Use the already-advanced `current_question_id` as the next question to ask once in your final reply.
 - After the owner answers, append a short answer note to `answers`, set `current_question_id` to the next unanswered question id, and ask that next question.
 - If all questions are answered, ask the summary confirmation question.
@@ -1930,7 +1931,7 @@ def render_owner_onboarding_initial_state() -> dict[str, object]:
         "answers": [],
         "notes": [
             "The first question is sent by a host-triggered OpenClaw hook. The owner's answer may arrive in a separate normal Slack DM session.",
-            "The owner-onboarding-continuation hook records answers and advances state only; the agent asks the next question in its normal reply.",
+            "The owner-onboarding-continuation hook records answers and advances state; the agent asks the next question in its normal reply. The hook may send a delayed fallback if no matching next-question reply is observed.",
         ],
     }
 
@@ -1940,7 +1941,7 @@ def render_owner_onboarding_hook_metadata() -> str:
 name: {OWNER_ONBOARDING_HOOK_NAME}
 description: "Advance proactive owner onboarding when the owner answers in Slack DM."
 metadata:
-  {{"openclaw": {{"events": ["message:received"], "always": true}}}}
+  {{"openclaw": {{"events": ["message:received", "message:sent"], "always": true}}}}
 ---
 
 # Owner Onboarding Continuation
@@ -1974,7 +1975,37 @@ def render_owner_onboarding_hook_handler(
         "improvement_loop": "Improvement loop",
         "summary_confirmation": "Confirmation",
     }
+    question_texts = {
+        "workflow_context": (
+            "What specific recurring workflows, meetings, artifacts, decisions, handoffs, or review "
+            "loops should I understand for context?"
+        ),
+        "output_preferences": (
+            "What output style do you prefer: concise vs. detailed, bullets vs. prose, recommendations "
+            "first, uncertainty handling, etc.?"
+        ),
+        "proactivity_areas": "Where would proactive help be welcome?",
+        "tools_data_sources": (
+            "What tools, accounts, docs, inboxes, calendars, Slack channels, Drive folders, or other "
+            "sources should I use or know about?"
+        ),
+        "boundaries_notifications": (
+            "What boundaries should I respect, when should I ask before acting, and what notifications "
+            "are too noisy?"
+        ),
+        "improvement_loop": "What should I get better at, and how should I collect feedback?",
+    }
+    question_keywords = {
+        "workflow_context": ["workflow", "meeting", "artifact", "decision", "handoff", "review"],
+        "output_preferences": ["output", "style", "concise", "detailed", "bullets", "recommendations"],
+        "proactivity_areas": ["proactive", "reminder", "follow-up", "monitor", "draft", "coordination"],
+        "tools_data_sources": ["tools", "accounts", "docs", "inbox", "calendar", "sources"],
+        "boundaries_notifications": ["boundaries", "avoid", "ask before", "notifications", "noisy"],
+        "improvement_loop": ["better", "improve", "feedback", "collect feedback"],
+        "summary_confirmation": ["summary", "profile", "look right", "correct", "corrections"],
+    }
     handler = r"""import fs from "node:fs/promises";
+import { spawn } from "node:child_process";
 
 const STATE_PATH = __STATE_PATH__;
 const PROFILE_PATH = __PROFILE_PATH__;
@@ -1982,8 +2013,11 @@ const HOOK_CONFIG_PATH = __HOOK_CONFIG_PATH__;
 const LOG_PATH = __LOG_PATH__;
 const QUESTION_SEQUENCE = __QUESTION_SEQUENCE__;
 const QUESTION_LABELS = __QUESTION_LABELS__;
+const QUESTION_TEXTS = __QUESTION_TEXTS__;
+const QUESTION_KEYWORDS = __QUESTION_KEYWORDS__;
 const MAX_ANSWER_LENGTH = 2400;
 const MAX_PROCESSED_IDS = 80;
+const FOLLOWUP_FALLBACK_DELAY_MS = 90 * 1000;
 
 function cleanString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -2070,6 +2104,19 @@ function isOwnerSlackDirectMessage(context, owner) {
   return matchesOwner(getSenderId(context), owner);
 }
 
+function isOwnerSlackSentMessage(context, owner) {
+  if (cleanString(context?.channelId).toLowerCase() !== "slack") {
+    return false;
+  }
+  if (context?.success === false) {
+    return false;
+  }
+  if (context?.isGroup || cleanString(context?.groupId)) {
+    return false;
+  }
+  return matchesOwner(context?.to, owner);
+}
+
 function shouldPause(content) {
   const text = content.toLowerCase();
   return (
@@ -2101,6 +2148,41 @@ function latestAnswers(state) {
   return answers;
 }
 
+function buildSummaryQuestion(state) {
+  const answers = latestAnswers(state);
+  const lines = QUESTION_SEQUENCE
+    .filter((id) => id !== "summary_confirmation")
+    .map((id) => {
+      const label = QUESTION_LABELS[id] || id;
+      const answer = answers.get(id) || "(not answered yet)";
+      return `- ${label}: ${answer}`;
+    });
+  return [
+    "I have enough to turn this into my working owner profile. Does this look right, and is there anything you want to correct?",
+    "",
+    ...lines,
+  ].join("\n");
+}
+
+function questionFor(state, questionId) {
+  if (questionId === "summary_confirmation") {
+    return buildSummaryQuestion(state);
+  }
+  return QUESTION_TEXTS[questionId] || "What else should I know to make this setup useful?";
+}
+
+function looksLikeQuestionFor(content, questionId) {
+  const text = cleanString(content).toLowerCase();
+  if (!text.includes("?")) {
+    return false;
+  }
+  const keywords = Array.isArray(QUESTION_KEYWORDS[questionId]) ? QUESTION_KEYWORDS[questionId] : [];
+  if (keywords.length === 0) {
+    return true;
+  }
+  return keywords.some((keyword) => text.includes(String(keyword).toLowerCase()));
+}
+
 function profileMarkdown(state) {
   const answers = latestAnswers(state);
   const lines = [
@@ -2130,6 +2212,63 @@ function profileMarkdown(state) {
   return `${lines.join("\n").trim()}\n`;
 }
 
+function sendSlackMessage(owner, message) {
+  const child = spawn(
+    "/usr/bin/openclaw",
+    ["message", "send", "--channel", "slack", "--target", `user:${stripUserPrefix(owner)}`, "--message", message, "--json"],
+    {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, HOME: "/home/admin" },
+    },
+  );
+  child.unref();
+}
+
+function scheduleFallback(owner, inboundMessageId, expectedQuestionId) {
+  if (!expectedQuestionId) {
+    return;
+  }
+  const timer = setTimeout(() => {
+    sendFallbackIfNeeded(owner, inboundMessageId, expectedQuestionId).catch((error) => {
+      appendLog(`fallback check failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, FOLLOWUP_FALLBACK_DELAY_MS);
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+}
+
+async function sendFallbackIfNeeded(owner, inboundMessageId, expectedQuestionId) {
+  const state = await readJson(STATE_PATH, null);
+  if (!state || state.status !== "active") {
+    return;
+  }
+  const transition = state.last_hook_transition || {};
+  if (cleanString(transition.inbound_message_id) !== cleanString(inboundMessageId)) {
+    return;
+  }
+  if (transition.agent_followup_observed_at || transition.fallback_sent_at) {
+    return;
+  }
+  const currentQuestionId = cleanString(state.current_question_id);
+  if (currentQuestionId !== expectedQuestionId) {
+    return;
+  }
+  const message = questionFor(state, expectedQuestionId);
+  if (!message) {
+    return;
+  }
+  state.last_hook_transition = {
+    ...transition,
+    fallback_sent_at: new Date().toISOString(),
+    fallback_question_id: expectedQuestionId,
+  };
+  await writeJson(STATE_PATH, state);
+  sendSlackMessage(owner, message);
+  await appendLog(`fallback sent for ${expectedQuestionId}`);
+}
+
 function markProcessed(state, messageId) {
   const processed = Array.isArray(state.processed_message_ids) ? state.processed_message_ids : [];
   if (messageId && processed.includes(messageId)) {
@@ -2143,11 +2282,41 @@ function markProcessed(state, messageId) {
 }
 
 const handler = async (event) => {
-  if (event.type !== "message" || event.action !== "received") {
+  if (event.type !== "message") {
     return;
   }
   const context = event.context || {};
   const owner = await resolveOwnerSlackUserId();
+  if (event.action === "sent") {
+    if (!isOwnerSlackSentMessage(context, owner)) {
+      return;
+    }
+    const state = await readJson(STATE_PATH, null);
+    if (!state || state.status !== "active") {
+      return;
+    }
+    const transition = state.last_hook_transition || {};
+    const expectedQuestionId = cleanString(transition.to_question_id) || cleanString(state.current_question_id);
+    if (!expectedQuestionId || transition.agent_followup_observed_at) {
+      return;
+    }
+    if (!looksLikeQuestionFor(context.content, expectedQuestionId)) {
+      await appendLog(`observed Slack reply without expected ${expectedQuestionId} question`);
+      return;
+    }
+    state.last_hook_transition = {
+      ...transition,
+      agent_followup_observed_at: new Date().toISOString(),
+      agent_followup_message_id: cleanString(context.messageId) || undefined,
+      agent_followup_question_id: expectedQuestionId,
+    };
+    await writeJson(STATE_PATH, state);
+    await appendLog(`observed agent follow-up for ${expectedQuestionId}`);
+    return;
+  }
+  if (event.action !== "received") {
+    return;
+  }
   if (!isOwnerSlackDirectMessage(context, owner)) {
     return;
   }
@@ -2209,6 +2378,7 @@ const handler = async (event) => {
   }
   state.last_hook_transition.to_question_id = nextId;
   await writeJson(STATE_PATH, state);
+  scheduleFallback(owner, messageId, nextId);
   await appendLog(`advanced ${currentQuestionId} -> ${nextId}; agent owns visible reply`);
 };
 
@@ -2221,6 +2391,8 @@ export default handler;
         "__LOG_PATH__": json.dumps(f"/home/admin/.openclaw/logs/{OWNER_ONBOARDING_HOOK_NAME}.log"),
         "__QUESTION_SEQUENCE__": json.dumps(question_sequence, indent=2),
         "__QUESTION_LABELS__": json.dumps(question_labels, indent=2),
+        "__QUESTION_TEXTS__": json.dumps(question_texts, indent=2),
+        "__QUESTION_KEYWORDS__": json.dumps(question_keywords, indent=2),
     }
     for placeholder, value in replacements.items():
         handler = handler.replace(placeholder, value)

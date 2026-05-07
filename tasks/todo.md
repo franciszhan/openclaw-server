@@ -305,3 +305,10 @@
 - Removed `agent_identity_tone` from the context, initial state, and continuation hook.
 - Updated the initial trigger prompt to lead with context similar to "Hey, been a minute - I want to improve myself for you..."
 - Refreshed Francis's installed context and hook on prod; his already-confirmed state was preserved.
+
+## Owner Onboarding Idle Reply Fallback
+
+- [x] Investigate delayed first-answer failure after the onboarding DM sat for a day.
+- [x] Add delayed fallback delivery if the hook advances state but no matching agent follow-up question is observed.
+- [x] Run tests and generated hook syntax check.
+- [ ] Deploy to prod and repair Francis state if needed.
